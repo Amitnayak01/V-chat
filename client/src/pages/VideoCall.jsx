@@ -33,7 +33,7 @@ export default function VideoCall() {
   const localStream = useRef();
   const hasInitialized = useRef(false);
   const pendingCandidates = useRef([]);
-  const remoteStreamSet = useRef(false); // Track if remote stream is already set
+  const remoteStreamRef = useRef(null); // Store the remote stream
 
   // Call states
   const [callState, setCallState] = useState("idle");
@@ -159,6 +159,11 @@ export default function VideoCall() {
       console.log("📹 Video tracks:", stream.getVideoTracks().length);
       console.log("🎤 Audio tracks:", stream.getAudioTracks().length);
       
+      // Log track details
+      stream.getTracks().forEach(track => {
+        console.log(`📊 Track: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+      });
+      
       localStream.current = stream;
       if (localVideo.current) {
         localVideo.current.srcObject = stream;
@@ -183,28 +188,47 @@ export default function VideoCall() {
 
     // Handle incoming remote tracks
     peerConnection.current.ontrack = (event) => {
-      console.log("📹 Received remote track:", event.track.kind);
+      console.log("📹 Received remote track:", event.track.kind, event.track.id);
+      console.log("📊 Track state:", event.track.readyState, "enabled:", event.track.enabled);
       
       if (event.streams && event.streams[0]) {
-        const remoteStream = event.streams[0];
+        const stream = event.streams[0];
+        console.log("📡 Remote stream ID:", stream.id);
+        console.log("📊 Remote stream tracks:", stream.getTracks().length);
         
-        // Only set srcObject once when we receive the first track
-        if (!remoteStreamSet.current && remoteVideo.current) {
-          console.log("✅ Setting remote stream (tracks:", remoteStream.getTracks().length, ")");
-          remoteVideo.current.srcObject = remoteStream;
-          remoteStreamSet.current = true;
+        // Store the remote stream
+        remoteStreamRef.current = stream;
+        
+        // Log all tracks in the stream
+        stream.getTracks().forEach(track => {
+          console.log(`  - ${track.kind} track: ${track.id}, enabled: ${track.enabled}`);
+        });
+        
+        // Set the remote video source if not already set
+        if (remoteVideo.current && !remoteVideo.current.srcObject) {
+          console.log("✅ Setting remote video srcObject");
+          remoteVideo.current.srcObject = stream;
           setHasRemoteStream(true);
           
-          // Ensure video plays
-          remoteVideo.current.play().catch(e => {
-            console.error("Error playing remote video:", e);
-            // Try again after a short delay
-            setTimeout(() => {
-              remoteVideo.current?.play().catch(err => console.log("Retry play failed:", err));
-            }, 100);
-          });
-        } else {
-          console.log("📹 Additional track received:", event.track.kind, "(stream already set)");
+          // Try to play the video
+          const playPromise = remoteVideo.current.play();
+          if (playPromise !== undefined) {
+            playPromise
+              .then(() => {
+                console.log("✅ Remote video playing successfully");
+              })
+              .catch(error => {
+                console.error("❌ Error playing remote video:", error);
+                // Retry after a short delay
+                setTimeout(() => {
+                  if (remoteVideo.current) {
+                    remoteVideo.current.play()
+                      .then(() => console.log("✅ Retry successful"))
+                      .catch(e => console.error("❌ Retry failed:", e));
+                  }
+                }, 500);
+              });
+          }
         }
       }
     };
@@ -231,10 +255,13 @@ export default function VideoCall() {
         console.log("✅ ICE connection established");
         setConnectionQuality("good");
       } else if (state === "disconnected") {
+        console.log("⚠️ ICE disconnected");
         setConnectionQuality("fair");
       } else if (state === "failed") {
+        console.log("❌ ICE failed");
         setConnectionQuality("poor");
-        console.error("❌ ICE connection failed");
+      } else if (state === "checking") {
+        console.log("🔍 ICE checking...");
       }
     };
 
@@ -247,7 +274,7 @@ export default function VideoCall() {
         setConnectionQuality("poor");
       } else if (state === "connected") {
         setConnectionQuality("good");
-        console.log("✅ Peer connection established");
+        console.log("✅ Peer connection fully established");
       }
     };
 
@@ -381,8 +408,8 @@ export default function VideoCall() {
       remoteVideo.current.srcObject = null;
     }
     
-    // Reset refs
-    remoteStreamSet.current = false;
+    // Clear refs
+    remoteStreamRef.current = null;
     
     navigate(-1);
   }, [navigate]);
