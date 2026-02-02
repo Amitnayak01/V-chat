@@ -9,8 +9,11 @@ import {
 const configuration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" }
-  ]
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" }
+  ],
+  iceCandidatePoolSize: 10
 };
 
 export default function VideoCall() {
@@ -29,6 +32,7 @@ export default function VideoCall() {
   const peerConnection = useRef();
   const localStream = useRef();
   const hasInitialized = useRef(false);
+  const pendingCandidates = useRef([]);
 
   // Call states
   const [callState, setCallState] = useState("idle");
@@ -44,6 +48,7 @@ export default function VideoCall() {
   // UI states
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [layoutMode, setLayoutMode] = useState("focus");
+  const [hasRemoteStream, setHasRemoteStream] = useState(false);
 
   // Function to go back to previous page
   const goBackToPreviousPage = useCallback(() => {
@@ -55,11 +60,31 @@ export default function VideoCall() {
     const handleCallAccepted = async ({ answer }) => {
       console.log("✅ Call accepted, setting remote description");
       try {
+        if (!peerConnection.current) {
+          console.error("❌ No peer connection available");
+          return;
+        }
+
         await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
+        console.log("✅ Remote description set successfully");
+        
+        // Process any pending ICE candidates
+        if (pendingCandidates.current.length > 0) {
+          console.log(`📥 Processing ${pendingCandidates.current.length} pending ICE candidates`);
+          for (const candidate of pendingCandidates.current) {
+            try {
+              await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+              console.error("Error adding pending ICE candidate:", err);
+            }
+          }
+          pendingCandidates.current = [];
+        }
+        
         setCallState("connected");
         startCallTimer();
       } catch (err) {
-        console.error("Error setting remote description:", err);
+        console.error("❌ Error setting remote description:", err);
       }
     };
 
@@ -75,12 +100,17 @@ export default function VideoCall() {
     };
 
     const handleIceCandidate = async ({ candidate }) => {
+      console.log("🧊 Received ICE candidate");
       try {
         if (peerConnection.current && peerConnection.current.remoteDescription) {
           await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log("✅ ICE candidate added");
+        } else {
+          console.log("⏳ Queueing ICE candidate (no remote description yet)");
+          pendingCandidates.current.push(candidate);
         }
       } catch (err) {
-        console.error("Error adding ICE candidate:", err);
+        console.error("❌ Error adding ICE candidate:", err);
       }
     };
 
@@ -125,9 +155,13 @@ export default function VideoCall() {
       });
       
       console.log("✅ Media devices accessed successfully");
+      console.log("📹 Video tracks:", stream.getVideoTracks().length);
+      console.log("🎤 Audio tracks:", stream.getAudioTracks().length);
+      
       localStream.current = stream;
       if (localVideo.current) {
         localVideo.current.srcObject = stream;
+        console.log("✅ Local video element updated");
       }
       return stream;
     } catch (err) {
@@ -137,40 +171,87 @@ export default function VideoCall() {
   };
 
   const createPeer = (stream, toUserId) => {
-    console.log("🔗 Creating peer connection");
+    console.log("🔗 Creating peer connection for:", toUserId);
     peerConnection.current = new RTCPeerConnection(configuration);
 
+    // Add local stream tracks to peer connection
     stream.getTracks().forEach(track => {
       peerConnection.current.addTrack(track, stream);
-      console.log("➕ Added track:", track.kind);
+      console.log("➕ Added track to peer connection:", track.kind, track.id);
     });
 
+    // Handle incoming remote tracks
     peerConnection.current.ontrack = (event) => {
-      console.log("📹 Received remote track:", event.streams[0]);
-      if (remoteVideo.current) {
-        remoteVideo.current.srcObject = event.streams[0];
+      console.log("📹 Received remote track:", event.track.kind);
+      console.log("📡 Remote streams:", event.streams.length);
+      
+      if (event.streams && event.streams[0]) {
+        const remoteStream = event.streams[0];
+        console.log("✅ Remote stream received with tracks:", remoteStream.getTracks().length);
+        
+        if (remoteVideo.current) {
+          remoteVideo.current.srcObject = remoteStream;
+          setHasRemoteStream(true);
+          console.log("✅ Remote video element updated");
+          
+          // Ensure video plays
+          remoteVideo.current.play().catch(e => {
+            console.error("Error playing remote video:", e);
+          });
+        }
+      } else {
+        console.warn("⚠️ No streams in track event");
       }
     };
 
+    // Handle ICE candidates
     peerConnection.current.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log("🧊 Sending ICE candidate");
         socket.emit("ice-candidate", {
           toUserId,
           candidate: event.candidate
         });
+      } else {
+        console.log("✅ All ICE candidates sent");
       }
     };
 
+    // Monitor ICE connection state
+    peerConnection.current.oniceconnectionstatechange = () => {
+      const state = peerConnection.current.iceConnectionState;
+      console.log("🧊 ICE connection state:", state);
+      
+      if (state === "connected" || state === "completed") {
+        console.log("✅ ICE connection established");
+        setConnectionQuality("good");
+      } else if (state === "disconnected") {
+        setConnectionQuality("fair");
+      } else if (state === "failed") {
+        setConnectionQuality("poor");
+        console.error("❌ ICE connection failed");
+      }
+    };
+
+    // Monitor connection state
     peerConnection.current.onconnectionstatechange = () => {
       const state = peerConnection.current.connectionState;
-      console.log("Connection state:", state);
+      console.log("🔗 Peer connection state:", state);
       
       if (state === "disconnected" || state === "failed") {
         setConnectionQuality("poor");
       } else if (state === "connected") {
         setConnectionQuality("good");
+        console.log("✅ Peer connection established");
       }
     };
+
+    // Monitor signaling state
+    peerConnection.current.onsignalingstatechange = () => {
+      console.log("📡 Signaling state:", peerConnection.current.signalingState);
+    };
+
+    return peerConnection.current;
   };
 
   // AUTO CALL OR ACCEPT INCOMING CALL
@@ -205,14 +286,21 @@ export default function VideoCall() {
       const stream = await setupMedia();
       createPeer(stream, targetUserId);
 
-      const offer = await peerConnection.current.createOffer();
+      console.log("📝 Creating offer...");
+      const offer = await peerConnection.current.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      
+      console.log("📝 Setting local description...");
       await peerConnection.current.setLocalDescription(offer);
 
+      console.log("📤 Sending call offer to server");
       socket.emit("call-user", {
         toUserId: targetUserId,
         fromUserId: currentUserId,
         fromUsername: localStorage.getItem("username") || "Anonymous",
-        offer
+        offer: peerConnection.current.localDescription
       });
     } catch (err) {
       console.error("❌ Error starting call:", err);
@@ -235,14 +323,23 @@ export default function VideoCall() {
       const stream = await setupMedia();
       createPeer(stream, incomingCall.fromUserId);
 
+      console.log("📝 Setting remote description from offer...");
       await peerConnection.current.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
-      const answer = await peerConnection.current.createAnswer();
+      
+      console.log("📝 Creating answer...");
+      const answer = await peerConnection.current.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      
+      console.log("📝 Setting local description...");
       await peerConnection.current.setLocalDescription(answer);
 
+      console.log("📤 Sending answer to caller");
       socket.emit("accept-call", {
         toUserId: incomingCall.fromUserId,
         fromUserId: currentUserId,
-        answer
+        answer: peerConnection.current.localDescription
       });
 
       setCallState("connected");
@@ -271,22 +368,20 @@ export default function VideoCall() {
       localStream.current = null;
     }
     
+    // Clear video elements
+    if (localVideo.current) {
+      localVideo.current.srcObject = null;
+    }
+    if (remoteVideo.current) {
+      remoteVideo.current.srcObject = null;
+    }
+    
     navigate(-1);
   }, [navigate]);
 
   const endCall = useCallback(() => {
     console.log("📴 Ending call");
     
-    // Close peer connection
-    if (peerConnection.current) {
-      peerConnection.current.close();
-    }
-    
-    // Stop all media tracks
-    if (localStream.current) {
-      localStream.current.getTracks().forEach(track => track.stop());
-    }
-
     // Emit end call event to server
     socket.emit("end-call", {
       toUserId: targetUserId,
@@ -295,11 +390,11 @@ export default function VideoCall() {
 
     setCallState("ended");
     
-    // Go back to previous page
+    // Cleanup and redirect
     setTimeout(() => {
-      goBackToPreviousPage();
+      cleanupAndRedirect();
     }, 1000);
-  }, [targetUserId, currentUserId, goBackToPreviousPage, socket]);
+  }, [targetUserId, currentUserId, socket, cleanupAndRedirect]);
 
   const toggleMute = () => {
     if (localStream.current) {
@@ -345,7 +440,8 @@ export default function VideoCall() {
         );
 
         if (sender) {
-          sender.replaceTrack(screenTrack);
+          await sender.replaceTrack(screenTrack);
+          console.log("✅ Screen sharing started");
         }
 
         screenTrack.onended = () => {
@@ -360,7 +456,8 @@ export default function VideoCall() {
         );
 
         if (sender) {
-          sender.replaceTrack(videoTrack);
+          await sender.replaceTrack(videoTrack);
+          console.log("✅ Screen sharing stopped");
         }
 
         setIsScreenSharing(false);
@@ -577,6 +674,22 @@ export default function VideoCall() {
             objectFit: 'cover'
           }}
         />
+
+        {/* No Remote Stream Indicator */}
+        {!hasRemoteStream && callState === "connected" && (
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            textAlign: 'center',
+            color: 'rgba(255, 255, 255, 0.7)',
+            fontSize: '16px'
+          }}>
+            <Video size={48} color="rgba(255, 255, 255, 0.5)" style={{ marginBottom: '12px' }} />
+            <p>Waiting for {targetUsername}'s video...</p>
+          </div>
+        )}
 
         {/* Local Video (PIP) */}
         <div style={{
