@@ -33,6 +33,7 @@ export default function VideoCall() {
   const localStream = useRef();
   const hasInitialized = useRef(false);
   const pendingCandidates = useRef([]);
+  const remoteStreamSet = useRef(false); // Track if remote stream is already set
 
   // Call states
   const [callState, setCallState] = useState("idle");
@@ -183,24 +184,28 @@ export default function VideoCall() {
     // Handle incoming remote tracks
     peerConnection.current.ontrack = (event) => {
       console.log("📹 Received remote track:", event.track.kind);
-      console.log("📡 Remote streams:", event.streams.length);
       
       if (event.streams && event.streams[0]) {
         const remoteStream = event.streams[0];
-        console.log("✅ Remote stream received with tracks:", remoteStream.getTracks().length);
         
-        if (remoteVideo.current) {
+        // Only set srcObject once when we receive the first track
+        if (!remoteStreamSet.current && remoteVideo.current) {
+          console.log("✅ Setting remote stream (tracks:", remoteStream.getTracks().length, ")");
           remoteVideo.current.srcObject = remoteStream;
+          remoteStreamSet.current = true;
           setHasRemoteStream(true);
-          console.log("✅ Remote video element updated");
           
           // Ensure video plays
           remoteVideo.current.play().catch(e => {
             console.error("Error playing remote video:", e);
+            // Try again after a short delay
+            setTimeout(() => {
+              remoteVideo.current?.play().catch(err => console.log("Retry play failed:", err));
+            }, 100);
           });
+        } else {
+          console.log("📹 Additional track received:", event.track.kind, "(stream already set)");
         }
-      } else {
-        console.warn("⚠️ No streams in track event");
       }
     };
 
@@ -375,6 +380,9 @@ export default function VideoCall() {
     if (remoteVideo.current) {
       remoteVideo.current.srcObject = null;
     }
+    
+    // Reset refs
+    remoteStreamSet.current = false;
     
     navigate(-1);
   }, [navigate]);
