@@ -41,14 +41,14 @@ export const CallProvider = ({ children }) => {
 
     const handleCallInvitation = ({ fromUserId, fromUsername, existingCallUserId, existingCallUsername }) => {
       console.log("📲 CALL INVITATION RECEIVED");
-      console.log("   From:", fromUsername, fromUserId);
-      console.log("   Join call with:", existingCallUsername, existingCallUserId);
+      console.log("   Invited by:", fromUsername, fromUserId);
+      console.log("   Should call:", existingCallUsername, existingCallUserId);
       
       setCallInvitation({ 
-        fromUserId, 
-        fromUsername, 
-        existingCallUserId, 
-        existingCallUsername 
+        fromUserId,           // Person who invited you
+        fromUsername,         // Their name
+        existingCallUserId,   // Person you should call
+        existingCallUsername  // Their name
       });
     };
 
@@ -100,17 +100,18 @@ export const CallProvider = ({ children }) => {
       return;
     }
 
-    console.log("✅ ACCEPTING INVITATION TO JOIN CALL");
-    console.log("   Will join call with:", callInvitation.existingCallUsername);
+    console.log("✅ ACCEPTING INVITATION");
+    console.log("   I will call:", callInvitation.existingCallUsername);
     console.log("   User ID:", callInvitation.existingCallUserId);
 
-    // Navigate to call with the user who is already in the call
+    // CRITICAL: Call the person who is ALREADY in the call
+    // NOT the person who invited you!
     const url = `/call?userId=${callInvitation.existingCallUserId}&username=${callInvitation.existingCallUsername}&incoming=false`;
     console.log("🔄 Navigating to:", url);
     
     navigate(url);
     
-    // Clear invitation after navigation
+    // Clear invitation
     setTimeout(() => {
       setCallInvitation(null);
     }, 500);
@@ -119,7 +120,7 @@ export const CallProvider = ({ children }) => {
   const declineInvitation = () => {
     if (!callInvitation) return;
 
-    console.log("❌ Declining call invitation from:", callInvitation.fromUsername);
+    console.log("❌ Declining call invitation");
     setCallInvitation(null);
   };
 
