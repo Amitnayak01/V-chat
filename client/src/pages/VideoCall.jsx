@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useCall } from "../CallContext";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Phone, Monitor, Grid, Volume2, VolumeX, Maximize, Minimize, User, Wifi, WifiOff, UserPlus } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Phone, Monitor, Grid, Volume2, VolumeX, Maximize, Minimize, User, Wifi, WifiOff } from "lucide-react";
 import { RefreshCcw } from "lucide-react";
-import AddParticipantModal from "./AddParticipantModal";
 
 
 const ICE_CONFIG = {
@@ -47,7 +46,6 @@ export default function VideoCall() {
   const [isMobile, setIsMobile] = useState(false);
   const [cameraFacing, setCameraFacing] = useState("user"); // "user" = front, "environment" = back
   const [isLocalFullscreen, setIsLocalFullscreen] = useState(false);
-  const [showAddParticipant, setShowAddParticipant] = useState(false);
  
   const pipRef = useRef(null);
 const [pipPosition, setPipPosition] = useState({ x: 0, y: 0 });
@@ -977,15 +975,6 @@ useEffect(() => {
             )}
           </div>
           <div className="header-actions">
-          {callState === "connected" && (
-              <button 
-                onClick={() => setShowAddParticipant(true)} 
-                className="control-btn" 
-                title="Add to Call"
-              >
-                <UserPlus size={isMobile ? 18 : 20} color="#fff" />
-              </button>
-            )}
           <button 
   onClick={() => setLayoutMode(m => m === "focus" ? "grid" : "focus")} 
   className="control-btn" 
@@ -1134,14 +1123,6 @@ useEffect(() => {
           </div>
         </div>
       )}
-
-      {/* Add Participant Modal */}
-      <AddParticipantModal 
-        isOpen={showAddParticipant}
-        onClose={() => setShowAddParticipant(false)}
-        currentCallUserId={targetUserId}
-        currentCallUsername={targetUsername}
-      />
     </div>
   );
 }
