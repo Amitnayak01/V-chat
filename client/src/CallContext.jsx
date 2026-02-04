@@ -2,8 +2,6 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { socket } from "./socket";
 import { Phone } from "lucide-react";
-import { initRingtone, playRingtone, stopRingtone } from "./utils/ringtone";
-
 
 const CallContext = createContext();
 
@@ -14,9 +12,6 @@ export const CallProvider = ({ children }) => {
   const [incomingCall, setIncomingCall] = useState(null);
   const currentUserId = localStorage.getItem("userId");
 
-  useEffect(() => {
-  initRingtone();
-}, []);
   /* 🔥 REGISTER USER ONLINE ASAP */
   useEffect(() => {
     if (!currentUserId) return;
@@ -39,13 +34,11 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     const handleIncomingCall = ({ fromUserId, fromUsername, offer }) => {
       console.log("📞 CALL RECEIVED:", fromUsername);
-       playRingtone()
       setIncomingCall({ fromUserId, fromUsername, offer });
     };
 
     const handleCallEnded = () => {
       console.log("📴 Call ended → clearing incomingCall state");
-      stopRingtone(); 
       setIncomingCall(null);
     };
 
@@ -62,7 +55,7 @@ export const CallProvider = ({ children }) => {
     if (!incomingCall) return;
     
     console.log("✅ Accepting call from:", incomingCall.fromUsername);
-    stopRingtone(); 
+    
     // Navigate to call page with incoming call data
     navigate(`/call?userId=${incomingCall.fromUserId}&username=${incomingCall.fromUsername}&incoming=true`);
     
@@ -72,7 +65,7 @@ export const CallProvider = ({ children }) => {
 
   const declineCall = () => {
     if (!incomingCall) return;
-     stopRingtone();
+    
     console.log("❌ Declining call from:", incomingCall.fromUsername);
     
     socket.emit("decline-call", { 
