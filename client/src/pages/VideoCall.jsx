@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useCall } from "../CallContext";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Phone, Monitor, Grid, Volume2, VolumeX, Maximize, Minimize, User, Wifi, WifiOff, UserPlus, Search, X } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Phone, Monitor, Grid, Volume2, VolumeX, Maximize, Minimize, User, Wifi, WifiOff } from "lucide-react";
 import { RefreshCcw } from "lucide-react";
-import api from "../api";
+
 
 const ICE_CONFIG = {
   iceServers: [
@@ -21,16 +21,14 @@ export default function VideoCall() {
   const targetUserId = params.get("userId");
   const targetUsername = params.get("username");
   const isIncoming = params.get("incoming") === "true";
-  const isGroupCall = params.get("groupCall") === "true";
-  const roomIdFromParams = params.get("roomId");
   const currentUserId = localStorage.getItem("userId");
 
   // Refs
   const localVideo = useRef();
-  const remoteVideos = useRef({}); // { peerId: videoElement }
-  const peerConnections = useRef({}); // { peerId: RTCPeerConnection }
+  const remoteVideo = useRef();
+  const peerConnection = useRef();
   const localStream = useRef();
-  const pendingCandidates = useRef({});
+  const pendingCandidates = useRef([]);
 
   // States
   const [callState, setCallState] = useState("idle");
@@ -46,75 +44,70 @@ export default function VideoCall() {
   const [showPlayButton, setShowPlayButton] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
-  const [cameraFacing, setCameraFacing] = useState("user");
+  const [cameraFacing, setCameraFacing] = useState("user"); // "user" = front, "environment" = back
   const [isLocalFullscreen, setIsLocalFullscreen] = useState(false);
-  
-  // Group call states
-  const [participants, setParticipants] = useState([]); // [{ userId, username, profilePic }]
-  const [roomId, setRoomId] = useState(roomIdFromParams || null);
-  const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
-  const [allUsers, setAllUsers] = useState([]);
-  const [onlineUsers, setOnlineUsers] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedUsers, setSelectedUsers] = useState([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-
+ 
   const pipRef = useRef(null);
-  const [pipPosition, setPipPosition] = useState({ x: 0, y: 0 });
-  const dragData = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
+const [pipPosition, setPipPosition] = useState({ x: 0, y: 0 });
+const dragData = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
 
-  const startDrag = (e) => {
-    if (layoutMode !== "focus" || isLocalFullscreen) return;
+const startDrag = (e) => {
+  if (layoutMode !== "focus" || isLocalFullscreen) return;
 
-    const rect = pipRef.current.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const rect = pipRef.current.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    dragData.current = {
-      dragging: true,
-      offsetX: clientX - rect.left,
-      offsetY: clientY - rect.top
-    };
+  dragData.current = {
+    dragging: true,
+    offsetX: clientX - rect.left,
+    offsetY: clientY - rect.top
   };
+};
 
-  const onDrag = (e) => {
-    if (!dragData.current.dragging) return;
+const onDrag = (e) => {
+  if (!dragData.current.dragging) return;
 
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    const x = clientX - dragData.current.offsetX;
-    const y = clientY - dragData.current.offsetY;
+  const x = clientX - dragData.current.offsetX;
+  const y = clientY - dragData.current.offsetY;
 
-    setPipPosition({ x, y });
+  setPipPosition({ x, y });
+};
+
+const endDrag = () => {
+  if (!dragData.current.dragging) return;
+  dragData.current.dragging = false;
+
+  const screenW = window.innerWidth;
+  const screenH = window.innerHeight;
+  const rect = pipRef.current.getBoundingClientRect();
+
+  // Snap logic
+  const snapX = rect.left < screenW / 2 ? 16 : screenW - rect.width - 16;
+  const snapY = rect.top < screenH / 2 ? 16 : screenH - rect.height - 120;
+
+  setPipPosition({ x: snapX, y: snapY });
+};
+
+
+useEffect(() => {
+  window.addEventListener("mousemove", onDrag);
+  window.addEventListener("mouseup", endDrag);
+  window.addEventListener("touchmove", onDrag);
+  window.addEventListener("touchend", endDrag);
+  return () => {
+    window.removeEventListener("mousemove", onDrag);
+    window.removeEventListener("mouseup", endDrag);
+    window.removeEventListener("touchmove", onDrag);
+    window.removeEventListener("touchend", endDrag);
   };
+}, []);
 
-  const endDrag = () => {
-    if (!dragData.current.dragging) return;
-    dragData.current.dragging = false;
 
-    const screenW = window.innerWidth;
-    const screenH = window.innerHeight;
-    const rect = pipRef.current.getBoundingClientRect();
 
-    const snapX = rect.left < screenW / 2 ? 16 : screenW - rect.width - 16;
-    const snapY = rect.top < screenH / 2 ? 16 : screenH - rect.height - 120;
-
-    setPipPosition({ x: snapX, y: snapY });
-  };
-
-  useEffect(() => {
-    window.addEventListener("mousemove", onDrag);
-    window.addEventListener("mouseup", endDrag);
-    window.addEventListener("touchmove", onDrag);
-    window.addEventListener("touchend", endDrag);
-    return () => {
-      window.removeEventListener("mousemove", onDrag);
-      window.removeEventListener("mouseup", endDrag);
-      window.removeEventListener("touchmove", onDrag);
-      window.removeEventListener("touchend", endDrag);
-    };
-  }, []);
 
   // Detect mobile
   useEffect(() => {
@@ -145,200 +138,74 @@ export default function VideoCall() {
 
   // Cleanup
   const cleanup = useCallback(() => {
-    Object.values(peerConnections.current).forEach(pc => pc?.close());
+    peerConnection.current?.close();
     localStream.current?.getTracks().forEach(t => t.stop());
     if (localVideo.current) localVideo.current.srcObject = null;
-    Object.values(remoteVideos.current).forEach(video => {
-      if (video) video.srcObject = null;
-    });
-    
-    if (roomId) {
-      socket.emit("leave-room", { roomId, userId: currentUserId });
-    }
-    
+    if (remoteVideo.current) remoteVideo.current.srcObject = null;
     navigate(-1);
-  }, [navigate, roomId, socket, currentUserId]);
+  }, [navigate]);
 
   const switchCamera = async () => {
-    try {
-      if (!localStream.current) return;
+  try {
+    if (!localStream.current) return;
 
-      const currentVideoTrack = localStream.current.getVideoTracks()[0];
-      if (currentVideoTrack) currentVideoTrack.stop();
+    const currentVideoTrack = localStream.current.getVideoTracks()[0];
+    if (currentVideoTrack) currentVideoTrack.stop();
 
-      const newFacing = cameraFacing === "user" ? "environment" : "user";
+    const newFacing = cameraFacing === "user" ? "environment" : "user";
 
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { exact: newFacing } },
-        audio: false
-      });
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { exact: newFacing } },
+      audio: false
+    });
 
-      const newVideoTrack = newStream.getVideoTracks()[0];
+    const newVideoTrack = newStream.getVideoTracks()[0];
 
-      // Replace track in all peer connections
-      Object.values(peerConnections.current).forEach(pc => {
-        const sender = pc?.getSenders().find(s => s.track?.kind === "video");
-        if (sender) sender.replaceTrack(newVideoTrack);
-      });
+    // Replace track in peer connection
+    const sender = peerConnection.current
+      ?.getSenders()
+      .find(s => s.track?.kind === "video");
 
-      localStream.current.removeTrack(currentVideoTrack);
-      localStream.current.addTrack(newVideoTrack);
+    if (sender) await sender.replaceTrack(newVideoTrack);
 
-      localVideo.current.srcObject = localStream.current;
+    // Update local stream
+    localStream.current.removeTrack(currentVideoTrack);
+    localStream.current.addTrack(newVideoTrack);
 
-      setCameraFacing(newFacing);
-    } catch (err) {
-      console.error("Camera switch error:", err);
-    }
-  };
+    localVideo.current.srcObject = localStream.current;
 
-  // Fetch all users for Add Participant modal
-  const fetchAllUsers = async () => {
-    try {
-      setLoadingUsers(true);
-      const token = localStorage.getItem("token");
-      const res = await api.get("/auth/users", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setAllUsers(res.data.filter(u => u._id !== currentUserId));
-    } catch (err) {
-      console.error("Error fetching users:", err);
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
+    setCameraFacing(newFacing);
+  } catch (err) {
+    console.error("Camera switch error:", err);
+  }
+};
 
   // Socket Events
   useEffect(() => {
     const handlers = {
       "call-accepted": async ({ answer }) => {
-        // For 1-to-1 calls
-        if (!isGroupCall && peerConnections.current[targetUserId]) {
-          await peerConnections.current[targetUserId].setRemoteDescription(new RTCSessionDescription(answer));
-          const pending = pendingCandidates.current[targetUserId] || [];
-          for (const c of pending) {
-            await peerConnections.current[targetUserId].addIceCandidate(new RTCIceCandidate(c));
-          }
-          pendingCandidates.current[targetUserId] = [];
-          setCallState("connected");
-          setCallDuration(0);
+        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
+        for (const c of pendingCandidates.current) {
+          await peerConnection.current.addIceCandidate(new RTCIceCandidate(c));
         }
-      },
-      
-      "call-declined": () => { 
-        alert("Call declined"); 
-        cleanup(); 
-      },
-      
-      "call-ended": cleanup,
-      
-      "ice-candidate": async ({ candidate, fromUserId }) => {
-        const peerId = fromUserId;
-        if (peerConnections.current[peerId]?.remoteDescription) {
-          await peerConnections.current[peerId].addIceCandidate(new RTCIceCandidate(candidate));
-        } else {
-          if (!pendingCandidates.current[peerId]) pendingCandidates.current[peerId] = [];
-          pendingCandidates.current[peerId].push(candidate);
-        }
-      },
-
-      // Group call events
-      "room-joined": ({ roomId: joinedRoomId, participants: roomParticipants }) => {
-        console.log("✅ Joined room:", joinedRoomId, "Participants:", roomParticipants);
-        setRoomId(joinedRoomId);
-        setParticipants(roomParticipants.filter(p => p.userId !== currentUserId));
+        pendingCandidates.current = [];
         setCallState("connected");
+        setCallDuration(0);
       },
-
-      "new-participant": async ({ userId, username, profilePic, offer }) => {
-        console.log("👤 New participant joined:", username);
-        
-        // Add to participants list
-        setParticipants(prev => {
-          if (prev.find(p => p.userId === userId)) return prev;
-          return [...prev, { userId, username, profilePic }];
-        });
-
-        // Create peer connection for new participant
-        const pc = createPeerConnection(userId);
-        
-        // Set remote description (offer from new participant)
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        
-        // Create answer
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        
-        // Send answer back
-        socket.emit("webrtc-answer", {
-          roomId,
-          toUserId: userId,
-          fromUserId: currentUserId,
-          answer: pc.localDescription
-        });
-
-        setHasRemoteStream(true);
-      },
-
-      "webrtc-offer": async ({ fromUserId, offer }) => {
-        console.log("📞 Received offer from:", fromUserId);
-        
-        const pc = createPeerConnection(fromUserId);
-        
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        
-        socket.emit("webrtc-answer", {
-          roomId,
-          toUserId: fromUserId,
-          fromUserId: currentUserId,
-          answer: pc.localDescription
-        });
-      },
-
-      "webrtc-answer": async ({ fromUserId, answer }) => {
-        console.log("✅ Received answer from:", fromUserId);
-        
-        if (peerConnections.current[fromUserId]) {
-          await peerConnections.current[fromUserId].setRemoteDescription(new RTCSessionDescription(answer));
-          
-          // Add pending candidates
-          const pending = pendingCandidates.current[fromUserId] || [];
-          for (const c of pending) {
-            await peerConnections.current[fromUserId].addIceCandidate(new RTCIceCandidate(c));
-          }
-          pendingCandidates.current[fromUserId] = [];
+      "call-declined": () => { alert("Call declined"); cleanup(); },
+      "call-ended": cleanup,
+      "ice-candidate": async ({ candidate }) => {
+        if (peerConnection.current?.remoteDescription) {
+          await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+        } else {
+          pendingCandidates.current.push(candidate);
         }
-      },
-
-      "participant-left": ({ userId, username }) => {
-        console.log("👋 Participant left:", username);
-        
-        // Remove from participants
-        setParticipants(prev => prev.filter(p => p.userId !== userId));
-        
-        // Close peer connection
-        if (peerConnections.current[userId]) {
-          peerConnections.current[userId].close();
-          delete peerConnections.current[userId];
-        }
-        
-        // Remove video element
-        if (remoteVideos.current[userId]) {
-          delete remoteVideos.current[userId];
-        }
-      },
-
-      "online-users": (users) => {
-        setOnlineUsers(users);
       }
     };
 
     Object.entries(handlers).forEach(([event, handler]) => socket.on(event, handler));
     return () => Object.keys(handlers).forEach(e => socket.off(e));
-  }, [socket, cleanup, isGroupCall, targetUserId, roomId, currentUserId]);
+  }, [socket, cleanup]);
 
   // Call Timer
   useEffect(() => {
@@ -346,6 +213,17 @@ export default function VideoCall() {
     const interval = setInterval(() => setCallDuration(d => d + 1), 1000);
     return () => clearInterval(interval);
   }, [callState]);
+
+  // Auto-play Remote Video
+  useEffect(() => {
+    if (!hasRemoteStream || !remoteVideo.current) return;
+    const timer = setTimeout(() => {
+      remoteVideo.current?.play()
+        .then(() => setShowPlayButton(false))
+        .catch(() => setShowPlayButton(true));
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [hasRemoteStream]);
 
   // Setup Media
   const setupMedia = async () => {
@@ -359,89 +237,47 @@ export default function VideoCall() {
   };
 
   // Create Peer Connection
-  const createPeerConnection = (peerId) => {
-    if (peerConnections.current[peerId]) {
-      return peerConnections.current[peerId];
-    }
-
+  const createPeer = (stream, toUserId) => {
     const pc = new RTCPeerConnection(ICE_CONFIG);
-    
-    // Add local stream tracks
-    if (localStream.current) {
-      localStream.current.getTracks().forEach(track => {
-        pc.addTrack(track, localStream.current);
-      });
-    }
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
-    // Handle incoming tracks
-    pc.ontrack = (event) => {
-      console.log("🎥 Received track from:", peerId);
-      
-      if (event.streams[0]) {
-        // Create or get video element for this peer
-        if (!remoteVideos.current[peerId]) {
-          const videoElement = document.createElement('video');
-          videoElement.autoplay = true;
-          videoElement.playsInline = true;
-          videoElement.id = `remote-video-${peerId}`;
-          remoteVideos.current[peerId] = videoElement;
-        }
-        
-        remoteVideos.current[peerId].srcObject = event.streams[0];
+    pc.ontrack = (e) => {
+      if (e.streams[0] && remoteVideo.current && !remoteVideo.current.srcObject) {
+        remoteVideo.current.srcObject = e.streams[0];
         setHasRemoteStream(true);
-        
-        // Force re-render
-        setParticipants(prev => [...prev]);
       }
     };
 
-    // Handle ICE candidates
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        if (isGroupCall) {
-          socket.emit("ice-candidate", { 
-            roomId, 
-            toUserId: peerId, 
-            fromUserId: currentUserId,
-            candidate: event.candidate 
-          });
-        } else {
-          socket.emit("ice-candidate", { 
-            toUserId: peerId, 
-            candidate: event.candidate 
-          });
-        }
-      }
+    pc.onicecandidate = (e) => {
+      if (e.candidate) socket.emit("ice-candidate", { toUserId, candidate: e.candidate });
     };
 
-    // Handle connection state
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
-      console.log(`ICE connection state for ${peerId}:`, state);
       setConnectionQuality(state === "connected" || state === "completed" ? "good" : 
                           state === "disconnected" ? "fair" : "poor");
     };
 
-    peerConnections.current[peerId] = pc;
+    peerConnection.current = pc;
     return pc;
   };
 
-  // Start Outgoing 1-to-1 Call
+  // Start Outgoing Call
   const startCall = async () => {
     try {
       setCallState("calling");
       const stream = await setupMedia();
-      createPeerConnection(targetUserId);
-      const offer = await peerConnections.current[targetUserId].createOffer({ 
+      createPeer(stream, targetUserId);
+      const offer = await peerConnection.current.createOffer({ 
         offerToReceiveAudio: true, 
         offerToReceiveVideo: true 
       });
-      await peerConnections.current[targetUserId].setLocalDescription(offer);
+      await peerConnection.current.setLocalDescription(offer);
       socket.emit("call-user", {
         toUserId: targetUserId,
         fromUserId: currentUserId,
         fromUsername: localStorage.getItem("username") || "Anonymous",
-        offer: peerConnections.current[targetUserId].localDescription
+        offer: peerConnection.current.localDescription
       });
     } catch (err) {
       alert("Failed to start call. Check permissions.");
@@ -449,23 +285,23 @@ export default function VideoCall() {
     }
   };
 
-  // Accept Incoming 1-to-1 Call
+  // Accept Incoming Call
   const acceptCall = async () => {
     if (!incomingCall) return;
     try {
       setCallState("connecting");
       const stream = await setupMedia();
-      createPeerConnection(incomingCall.fromUserId);
-      await peerConnections.current[incomingCall.fromUserId].setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
-      const answer = await peerConnections.current[incomingCall.fromUserId].createAnswer({
+      createPeer(stream, incomingCall.fromUserId);
+      await peerConnection.current.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+      const answer = await peerConnection.current.createAnswer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: true
       });
-      await peerConnections.current[incomingCall.fromUserId].setLocalDescription(answer);
+      await peerConnection.current.setLocalDescription(answer);
       socket.emit("accept-call", {
         toUserId: incomingCall.fromUserId,
         fromUserId: currentUserId,
-        answer: peerConnections.current[incomingCall.fromUserId].localDescription
+        answer: peerConnection.current.localDescription
       });
       setCallState("connected");
       setIncomingCall(null);
@@ -476,93 +312,19 @@ export default function VideoCall() {
     }
   };
 
-  // Start Group Call
-  const startGroupCall = async () => {
-    try {
-      setCallState("connecting");
-      const stream = await setupMedia();
-      
-      const newRoomId = `room-${currentUserId}-${Date.now()}`;
-      setRoomId(newRoomId);
-      
-      socket.emit("create-room", {
-        roomId: newRoomId,
-        userId: currentUserId,
-        username: localStorage.getItem("username") || "Anonymous",
-        profilePic: localStorage.getItem("profilePic") || ""
-      });
-      
-      setCallState("connected");
-      setCallDuration(0);
-    } catch (err) {
-      console.error("Failed to start group call:", err);
-      alert("Failed to start group call. Check permissions.");
-      cleanup();
-    }
-  };
-
-  // Join Group Call
-  const joinGroupCall = async (joinRoomId) => {
-    try {
-      setCallState("connecting");
-      const stream = await setupMedia();
-      
-      socket.emit("join-room", {
-        roomId: joinRoomId,
-        userId: currentUserId,
-        username: localStorage.getItem("username") || "Anonymous",
-        profilePic: localStorage.getItem("profilePic") || ""
-      });
-    } catch (err) {
-      console.error("Failed to join group call:", err);
-      alert("Failed to join group call. Check permissions.");
-      cleanup();
-    }
-  };
-
-  // Send offers to existing participants
-  const sendOffersToParticipants = async (participantsList) => {
-    for (const participant of participantsList) {
-      if (participant.userId === currentUserId) continue;
-      
-      const pc = createPeerConnection(participant.userId);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      
-      socket.emit("webrtc-offer", {
-        roomId,
-        toUserId: participant.userId,
-        fromUserId: currentUserId,
-        offer: pc.localDescription
-      });
-    }
-  };
-
   // Initialize Call
   useEffect(() => {
     let initialized = false;
     if (!initialized) {
-      if (isGroupCall && roomIdFromParams) {
-        // Joining existing group call
-        joinGroupCall(roomIdFromParams);
-      } else if (isIncoming && incomingCall) {
-        // Accepting 1-to-1 call
-        acceptCall();
-      } else if (targetUserId && targetUsername && !isIncoming) {
-        // Starting 1-to-1 call
-        startCall();
-      }
+      if (isIncoming && incomingCall) acceptCall();
+      else if (targetUserId && targetUsername && !isIncoming) startCall();
       initialized = true;
     }
   }, []);
 
   // End Call
   const endCall = () => {
-    if (isGroupCall && roomId) {
-      socket.emit("leave-room", { roomId, userId: currentUserId });
-    } else {
-      socket.emit("end-call", { toUserId: targetUserId, fromUserId: currentUserId });
-    }
+    socket.emit("end-call", { toUserId: targetUserId, fromUserId: currentUserId });
     setCallState("ended");
     setTimeout(cleanup, 1000);
   };
@@ -585,35 +347,26 @@ export default function VideoCall() {
   };
 
   const toggleSpeaker = () => {
-    Object.values(remoteVideos.current).forEach(video => {
-      if (video) video.muted = !video.muted;
-    });
-    setIsSpeakerOff(!isSpeakerOff);
+    if (remoteVideo.current) {
+      remoteVideo.current.muted = !remoteVideo.current.muted;
+      setIsSpeakerOff(remoteVideo.current.muted);
+    }
   };
 
   const toggleScreenShare = async () => {
     try {
+      const sender = peerConnection.current.getSenders().find(s => s.track?.kind === "video");
+      if (!sender) return;
+
       if (!isScreenSharing) {
         const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const screenTrack = screenStream.getVideoTracks()[0];
-        
-        // Replace video track in all peer connections
-        Object.values(peerConnections.current).forEach(pc => {
-          const sender = pc?.getSenders().find(s => s.track?.kind === "video");
-          if (sender) sender.replaceTrack(screenTrack);
-        });
-        
+        await sender.replaceTrack(screenTrack);
         screenTrack.onended = () => toggleScreenShare();
         setIsScreenSharing(true);
       } else {
         const videoTrack = localStream.current.getVideoTracks()[0];
-        
-        // Restore camera track
-        Object.values(peerConnections.current).forEach(pc => {
-          const sender = pc?.getSenders().find(s => s.track?.kind === "video");
-          if (sender) sender.replaceTrack(videoTrack);
-        });
-        
+        await sender.replaceTrack(videoTrack);
         setIsScreenSharing(false);
       }
     } catch (err) {
@@ -631,62 +384,11 @@ export default function VideoCall() {
     }
   };
 
-  // Open Add Participant Modal
-  const openAddParticipantModal = () => {
-    fetchAllUsers();
-    setShowAddParticipantModal(true);
-  };
-
-  // Invite users to group call
-  const inviteUsersToCall = () => {
-    if (selectedUsers.length === 0) {
-      alert("Please select at least one user");
-      return;
-    }
-
-    let callRoomId = roomId;
-    
-    // If not in a group call yet, create one
-    if (!isGroupCall || !roomId) {
-      callRoomId = `room-${currentUserId}-${Date.now()}`;
-      setRoomId(callRoomId);
-      
-      socket.emit("create-room", {
-        roomId: callRoomId,
-        userId: currentUserId,
-        username: localStorage.getItem("username") || "Anonymous",
-        profilePic: localStorage.getItem("profilePic") || ""
-      });
-      
-      setCallState("connected");
-    }
-
-    // Send invitations
-    selectedUsers.forEach(userId => {
-      socket.emit("invite-to-group-call", {
-        toUserId: userId,
-        fromUserId: currentUserId,
-        fromUsername: localStorage.getItem("username") || "Anonymous",
-        roomId: callRoomId
-      });
-    });
-
-    setShowAddParticipantModal(false);
-    setSelectedUsers([]);
-    alert(`Invited ${selectedUsers.length} user(s) to the call`);
-  };
-
   const formatDuration = (s) => {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     return h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}` 
                  : `${m}:${sec.toString().padStart(2, '0')}`;
   };
-
-  // Filter users for modal
-  const filteredUsers = allUsers.filter(user => 
-    user.username.toLowerCase().includes(searchQuery.toLowerCase()) &&
-    !participants.find(p => p.userId === user._id)
-  );
 
   return (
     <div className="video-call-container">
@@ -787,78 +489,21 @@ export default function VideoCall() {
           justify-content: center;
         }
 
-        /* Grid layout for multiple participants */
-        .participants-grid {
+        .video-layout.grid-mode {
           display: grid;
+          grid-template-columns: 1fr 1fr;
           gap: 8px;
           padding: 8px;
-          width: 100%;
-          height: 100%;
-          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-          grid-auto-rows: minmax(200px, 1fr);
-        }
-
-        .participants-grid.count-2 {
-          grid-template-columns: 1fr 1fr;
-        }
-
-        .participants-grid.count-3 {
-          grid-template-columns: 1fr 1fr;
-          grid-template-rows: 1fr 1fr;
-        }
-
-        .participants-grid.count-4 {
-          grid-template-columns: 1fr 1fr;
-          grid-template-rows: 1fr 1fr;
-        }
-
-        .participants-grid.count-5,
-        .participants-grid.count-6 {
-          grid-template-columns: repeat(3, 1fr);
         }
 
         @media (max-width: 768px) {
-          .participants-grid {
-            grid-template-columns: 1fr 1fr !important;
+          .video-layout.grid-mode {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr 1fr;
           }
         }
 
-        @media (max-width: 480px) {
-          .participants-grid {
-            grid-template-columns: 1fr !important;
-          }
-        }
-
-        .participant-video-container {
-          position: relative;
-          background: #000;
-          border-radius: 12px;
-          overflow: hidden;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border: 2px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .participant-video {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        .participant-name {
-          position: absolute;
-          bottom: 12px;
-          left: 12px;
-          background: rgba(0, 0, 0, 0.7);
-          padding: 6px 12px;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 600;
-          backdrop-filter: blur(10px);
-        }
-
-        /* Remote Video (for 1-to-1) */
+        /* Remote Video */
         .remote-video-container {
           width: 100%;
           height: 100%;
@@ -867,6 +512,11 @@ export default function VideoCall() {
           display: flex;
           align-items: center;
           justify-content: center;
+        }
+
+        .video-layout.grid-mode .remote-video-container {
+          border-radius: 16px;
+          overflow: hidden;
         }
 
         .remote-video {
@@ -890,6 +540,15 @@ export default function VideoCall() {
           background: #000;
           z-index: 50;
           transition: all 0.3s ease;
+        }
+
+        .video-layout.grid-mode .local-video-container {
+          position: relative;
+          bottom: auto;
+          right: auto;
+          width: 100%;
+          height: 100%;
+          border-radius: 16px;
         }
 
         @media (max-width: 768px) {
@@ -1075,195 +734,40 @@ export default function VideoCall() {
           transform: scale(1.05);
         }
 
-        /* Add Participant Modal */
-        .modal-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.8);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 200;
-          backdrop-filter: blur(10px);
+        @media (max-width: 768px) {
+          .control-btn svg {
+            width: 20px;
+            height: 20px;
+          }
+          
+          .control-btn.end-call svg {
+            width: 24px;
+            height: 24px;
+          }
         }
 
-        .modal-content {
-          background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-          border-radius: 20px;
-          padding: 30px;
-          width: 90%;
-          max-width: 500px;
-          max-height: 80vh;
-          overflow-y: auto;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        @media (max-width: 480px) {
+          .control-btn svg {
+            width: 18px;
+            height: 18px;
+          }
+          
+          .control-btn.end-call svg {
+            width: 22px;
+            height: 22px;
+          }
         }
 
-        .modal-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 20px;
-        }
-
-        .modal-title {
-          font-size: 24px;
-          font-weight: 700;
-        }
-
-        .close-btn {
-          width: 40px;
-          height: 40px;
-          border-radius: 50%;
-          background: rgba(255, 255, 255, 0.1);
-          border: none;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .close-btn:hover {
-          background: rgba(255, 255, 255, 0.2);
-        }
-
-        .search-box {
-          width: 100%;
-          padding: 12px 16px;
-          border-radius: 10px;
-          border: 2px solid rgba(255, 255, 255, 0.1);
-          background: rgba(0, 0, 0, 0.3);
-          color: white;
-          font-size: 16px;
-          margin-bottom: 20px;
-          outline: none;
-          transition: all 0.2s ease;
-        }
-
-        .search-box:focus {
-          border-color: rgba(59, 130, 246, 0.5);
-        }
-
-        .users-list {
-          max-height: 400px;
-          overflow-y: auto;
-        }
-
-        .user-item {
-          display: flex;
-          align-items: center;
-          padding: 12px;
-          border-radius: 10px;
-          margin-bottom: 8px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          background: rgba(255, 255, 255, 0.05);
-        }
-
-        .user-item:hover {
-          background: rgba(255, 255, 255, 0.1);
-        }
-
-        .user-item.selected {
-          background: rgba(59, 130, 246, 0.2);
-          border: 2px solid rgba(59, 130, 246, 0.5);
-        }
-
-        .user-avatar {
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          margin-right: 12px;
-          object-fit: cover;
-        }
-
-        .user-avatar-placeholder {
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          margin-right: 12px;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 20px;
-          font-weight: 700;
-        }
-
-        .user-info {
-          flex: 1;
-        }
-
-        .user-name {
-          font-size: 16px;
-          font-weight: 600;
-          margin-bottom: 4px;
-        }
-
-        .user-status {
-          font-size: 12px;
-          color: rgba(255, 255, 255, 0.6);
-        }
-
-        .online-indicator {
-          display: inline-block;
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #4ade80;
-          margin-right: 6px;
-        }
-
-        .offline-indicator {
-          display: inline-block;
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #666;
-          margin-right: 6px;
-        }
-
-        .invite-btn {
-          width: 100%;
-          padding: 14px;
-          border-radius: 10px;
-          border: none;
-          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-          color: white;
-          font-size: 16px;
-          font-weight: 600;
-          cursor: pointer;
-          margin-top: 20px;
-          transition: all 0.2s ease;
-        }
-
-        .invite-btn:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
-        }
-
-        .invite-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        /* Animations */
-        @keyframes pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.7; transform: scale(1.05); }
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        .fade-in {
-          animation: fadeIn 0.4s ease;
+        @media (max-width: 380px) {
+          .control-btn svg {
+            width: 17px;
+            height: 17px;
+          }
+          
+          .control-btn.end-call svg {
+            width: 20px;
+            height: 20px;
+          }
         }
 
         /* Call States */
@@ -1304,9 +808,150 @@ export default function VideoCall() {
           color: rgba(255, 255, 255, 0.9);
         }
 
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
-        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 3px; }
+        /* Play Button */
+        .play-button {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: rgba(0, 0, 0, 0.9);
+          padding: clamp(20px, 5vw, 32px) clamp(32px, 8vw, 56px);
+          border-radius: 20px;
+          border: 2px solid rgba(59, 130, 246, 0.5);
+          cursor: pointer;
+          z-index: 60;
+          transition: all 0.3s ease;
+          backdrop-filter: blur(10px);
+        }
+
+        .play-button:hover {
+          background: rgba(0, 0, 0, 0.95);
+          border-color: rgba(59, 130, 246, 0.8);
+          transform: translate(-50%, -50%) scale(1.05);
+        }
+
+        .play-icon {
+          width: clamp(60px, 12vw, 80px);
+          height: clamp(60px, 12vw, 80px);
+          border-radius: 50%;
+          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 16px;
+          box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
+        }
+
+        .play-triangle {
+          width: 0;
+          height: 0;
+          border-left: clamp(20px, 4vw, 28px) solid white;
+          border-top: clamp(12px, 2.5vw, 18px) solid transparent;
+          border-bottom: clamp(12px, 2.5vw, 18px) solid transparent;
+          margin-left: clamp(4px, 1vw, 6px);
+        }
+
+        .play-text {
+          font-size: clamp(14px, 3.5vw, 18px);
+          font-weight: 600;
+          color: white;
+        }
+
+        /* Animations */
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(1.05); }
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fade-in {
+          animation: fadeIn 0.4s ease;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 480px) {
+          .header-meta {
+            font-size: 11px;
+          }
+          
+          .controls {
+            max-width: 95vw;
+          }
+        }
+
+        @media (max-width: 380px) {
+          .controls {
+            max-width: 98vw;
+          }
+        }
+
+
+
+        .video-layout.grid-mode {
+  display: grid;
+  width: 100%;
+  height: 100%;
+}
+
+/* Desktop → side by side */
+@media (min-width: 769px) {
+  .video-layout.grid-mode {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+}
+
+/* Mobile → top bottom split */
+@media (max-width: 768px) {
+  .video-layout.grid-mode {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  .video-layout.grid-mode .remote-video-container,
+  .video-layout.grid-mode .local-video-container {
+    position: relative !important;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 0 !important;
+    bottom: auto !important;
+    right: auto !important;
+  }
+}
+
+
+
+
+        /* Swap videos when local is fullscreen */
+.video-layout.local-full .local-video-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+  z-index: 10;
+}
+
+.video-layout.local-full .remote-video-container {
+  position: absolute;
+  bottom: clamp(80px, 15vh, 140px);
+  right: clamp(12px, 3vw, 30px);
+  width: clamp(120px, 25vw, 280px);
+  height: clamp(90px, 18vw, 200px);
+  border-radius: clamp(12px, 2vw, 20px);
+  overflow: hidden;
+  border: 3px solid rgba(255,255,255,0.2);
+  z-index: 50;
+}
+
+
+        /* Hide scrollbar */
+        ::-webkit-scrollbar { display: none; }
       `}</style>
 
       {/* Header */}
@@ -1316,7 +961,7 @@ export default function VideoCall() {
             <h2>
               {callState === "calling" ? `Calling ${targetUsername}...` : 
                callState === "connecting" ? `Connecting...` :
-               callState === "connected" ? (isGroupCall || participants.length > 0 ? `Group Call (${participants.length + 1} participants)` : targetUsername) : 
+               callState === "connected" ? targetUsername : 
                callState === "ended" ? "Call Ended" : 'Video Call'}
             </h2>
             {callState === "connected" && (
@@ -1330,21 +975,21 @@ export default function VideoCall() {
             )}
           </div>
           <div className="header-actions">
-            <button 
-              onClick={() => setLayoutMode(m => m === "focus" ? "grid" : "focus")} 
-              className="control-btn" 
-              title="Split Screen"
-            >
-              <Grid size={isMobile ? 18 : 20} color="#fff" />
-            </button>
+          <button 
+  onClick={() => setLayoutMode(m => m === "focus" ? "grid" : "focus")} 
+  className="control-btn" 
+  title="Split Screen"
+>
+  <Grid size={isMobile ? 18 : 20} color="#fff" />
+</button>
 
             <button
-              onClick={switchCamera}
-              className="control-btn"
-              title="Flip Camera"
-            >
-              <RefreshCcw size={isMobile ? 20 : 22} color="#fff" />
-            </button>
+  onClick={switchCamera}
+  className="control-btn"
+  title="Flip Camera"
+>
+  <RefreshCcw size={isMobile ? 20 : 22} color="#fff" />
+</button>
 
             <button onClick={toggleFullscreen} className="control-btn" title="Fullscreen">
               {isFullscreen ? <Minimize size={20} color="#fff" /> : <Maximize size={20} color="#fff" />}
@@ -1354,116 +999,61 @@ export default function VideoCall() {
       </div>
 
       {/* Video Layout */}
-      <div className="video-layout">
-        {/* Show grid for group calls */}
-        {(isGroupCall || participants.length > 0) && callState === "connected" ? (
-          <div className={`participants-grid count-${participants.length + 1}`}>
-            {/* Local video in grid */}
-            <div className="participant-video-container">
-              <video ref={localVideo} autoPlay muted playsInline className="participant-video" style={{ transform: 'scaleX(-1)' }} />
-              <div className="participant-name">You</div>
-              {isVideoOff && (
-                <div className="video-placeholder">
-                  <div className="video-placeholder-icon">
-                    <VideoOff size={isMobile ? 24 : 32} color="rgba(255, 255, 255, 0.6)" />
-                  </div>
-                </div>
-              )}
+      <div className={`video-layout ${layoutMode === "grid" ? "grid-mode" : ""} ${isLocalFullscreen ? "local-full" : ""}`}>
+        {/* Remote Video */}
+        <div 
+  className="remote-video-container"
+  onClick={() => setIsLocalFullscreen(f => !f)}
+>
+          <video ref={remoteVideo} autoPlay playsInline className="remote-video" />
+          
+          {!hasRemoteStream && callState === "connected" && (
+            <div className="video-placeholder fade-in">
+              <div className="video-placeholder-icon">
+                <User size={isMobile ? 32 : 40} color="rgba(59, 130, 246, 0.6)" />
+              </div>
+              <p>Waiting for {targetUsername}'s video...</p>
             </div>
+          )}
 
-            {/* Remote participants */}
-            {participants.map((participant) => {
-              const videoElement = remoteVideos.current[participant.userId];
-              return (
-                <div key={participant.userId} className="participant-video-container">
-                  {videoElement ? (
-                    <>
-                      <video 
-                        ref={el => {
-                          if (el && videoElement.srcObject && el.srcObject !== videoElement.srcObject) {
-                            el.srcObject = videoElement.srcObject;
-                            el.play().catch(err => console.error("Play error:", err));
-                          }
-                        }}
-                        autoPlay 
-                        playsInline 
-                        className="participant-video"
-                      />
-                      <div className="participant-name">{participant.username}</div>
-                    </>
-                  ) : (
-                    <div className="video-placeholder fade-in">
-                      <div className="video-placeholder-icon">
-                        <User size={isMobile ? 32 : 40} color="rgba(59, 130, 246, 0.6)" />
-                      </div>
-                      <p>{participant.username}</p>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* 1-to-1 call layout */
-          <>
-            {/* Remote Video */}
-            <div 
-              className="remote-video-container"
-              onClick={() => setIsLocalFullscreen(f => !f)}
-            >
-              <video 
-                ref={el => {
-                  if (el && remoteVideos.current[targetUserId]) {
-                    const videoEl = remoteVideos.current[targetUserId];
-                    if (videoEl.srcObject && el.srcObject !== videoEl.srcObject) {
-                      el.srcObject = videoEl.srcObject;
-                      el.play().catch(err => console.error("Play error:", err));
-                    }
-                  }
-                }}
-                autoPlay 
-                playsInline 
-                className="remote-video" 
-              />
-              
-              {!hasRemoteStream && callState === "connected" && (
-                <div className="video-placeholder fade-in">
-                  <div className="video-placeholder-icon">
-                    <User size={isMobile ? 32 : 40} color="rgba(59, 130, 246, 0.6)" />
-                  </div>
-                  <p>Waiting for {targetUsername}'s video...</p>
-                </div>
-              )}
+          {showPlayButton && hasRemoteStream && (
+            <div className="play-button fade-in" onClick={() => remoteVideo.current?.play().then(() => setShowPlayButton(false))}>
+              <div className="play-icon">
+                <div className="play-triangle" />
+              </div>
+              <p className="play-text">Tap to play video</p>
             </div>
+          )}
+        </div>
 
-            {/* Local Video (PiP) */}
-            <div
-              ref={pipRef}
-              className="local-video-container fade-in"
-              onMouseDown={startDrag}
-              onTouchStart={startDrag}
-              style={
-                layoutMode === "focus" && !isLocalFullscreen
-                  ? {
-                      position: "absolute",
-                      left: pipPosition.x || undefined,
-                      top: pipPosition.y || undefined
-                    }
-                  : {}
-              }
-            >
-              <video ref={localVideo} autoPlay muted playsInline className="local-video" />
-              {isVideoOff && (
-                <div className="video-placeholder">
-                  <div className="video-placeholder-icon">
-                    <VideoOff size={isMobile ? 24 : 32} color="rgba(255, 255, 255, 0.6)" />
-                  </div>
-                  <p style={{ fontSize: isMobile ? '12px' : '14px' }}>Camera Off</p>
-                </div>
-              )}
+        {/* Local Video (PiP) */}
+  <div
+  ref={pipRef}
+  className="local-video-container fade-in"
+  onMouseDown={startDrag}
+  onTouchStart={startDrag}
+  style={
+    layoutMode === "focus" && !isLocalFullscreen
+      ? {
+          position: "absolute",
+          left: pipPosition.x || undefined,
+          top: pipPosition.y || undefined
+        }
+      : {}
+  }
+>
+
+
+          <video ref={localVideo} autoPlay muted playsInline className="local-video" />
+          {isVideoOff && (
+            <div className="video-placeholder">
+              <div className="video-placeholder-icon">
+                <VideoOff size={isMobile ? 24 : 32} color="rgba(255, 255, 255, 0.6)" />
+              </div>
+              <p style={{ fontSize: isMobile ? '12px' : '14px' }}>Camera Off</p>
             </div>
-          </>
-        )}
+          )}
+        </div>
 
         {/* Call State Overlays */}
         {(callState === "calling" || callState === "connecting") && (
@@ -1529,124 +1119,6 @@ export default function VideoCall() {
               title={isScreenSharing ? "Stop sharing" : "Share screen"}
             >
               <Monitor size={isMobile ? 20 : 22} color="#fff" />
-            </button>
-
-            {/* Add to Call button */}
-            {callState === "connected" && (
-              <button 
-                onClick={openAddParticipantModal} 
-                className="control-btn"
-                title="Add participants"
-              >
-                <UserPlus size={isMobile ? 20 : 22} color="#fff" />
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Add Participant Modal */}
-      {showAddParticipantModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h3 className="modal-title">Add Participants</h3>
-              <button className="close-btn" onClick={() => setShowAddParticipantModal(false)}>
-                <X size={20} color="#fff" />
-              </button>
-            </div>
-
-            <div style={{ position: 'relative' }}>
-              <input 
-                type="text"
-                className="search-box"
-                placeholder="Search users..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <Search 
-                size={20} 
-                color="rgba(255,255,255,0.5)" 
-                style={{ position: 'absolute', right: '16px', top: '16px', pointerEvents: 'none' }}
-              />
-            </div>
-
-            <div className="users-list">
-              {loadingUsers ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: 'rgba(255,255,255,0.6)' }}>
-                  Loading users...
-                </div>
-              ) : filteredUsers.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: 'rgba(255,255,255,0.6)' }}>
-                  No users found
-                </div>
-              ) : (
-                filteredUsers.map(user => {
-                  const isOnline = onlineUsers.includes(user._id);
-                  const isSelected = selectedUsers.includes(user._id);
-                  
-                  return (
-                    <div 
-                      key={user._id}
-                      className={`user-item ${isSelected ? 'selected' : ''}`}
-                      onClick={() => {
-                        if (isSelected) {
-                          setSelectedUsers(prev => prev.filter(id => id !== user._id));
-                        } else {
-                          setSelectedUsers(prev => [...prev, user._id]);
-                        }
-                      }}
-                    >
-                      {user.profilePic ? (
-                        <img src={user.profilePic} alt={user.username} className="user-avatar" />
-                      ) : (
-                        <div className="user-avatar-placeholder">
-                          {user.username.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      
-                      <div className="user-info">
-                        <div className="user-name">{user.username}</div>
-                        <div className="user-status">
-                          {isOnline ? (
-                            <>
-                              <span className="online-indicator"></span>
-                              Online
-                            </>
-                          ) : (
-                            <>
-                              <span className="offline-indicator"></span>
-                              Offline
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      {isSelected && (
-                        <div style={{ 
-                          width: '24px', 
-                          height: '24px', 
-                          borderRadius: '50%', 
-                          background: '#3b82f6',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}>
-                          ✓
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <button 
-              className="invite-btn"
-              onClick={inviteUsersToCall}
-              disabled={selectedUsers.length === 0}
-            >
-              Invite {selectedUsers.length > 0 ? `(${selectedUsers.length})` : ''} to Call
             </button>
           </div>
         </div>

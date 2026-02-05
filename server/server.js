@@ -21,11 +21,8 @@ const io = new Server(server, { cors: { origin: "*" } });
 /* ================= MAPS ================= */
 const onlineUsers = new Map();  // userId -> socketId
 const socketToUser = new Map(); // socketId -> userId
-const activeCalls = new Map();  // userId -> otherUserId (for 1-to-1 calls)
+const activeCalls = new Map();  // userId -> otherUserId
 const callTimers = new Map();   // userId -> startTime
-
-// Group call data structures
-const rooms = new Map();        // roomId -> { participants: [{ userId, username, profilePic, socketId }], createdAt }
 
 process.on("uncaughtException", err => {
   console.error("UNCAUGHT EXCEPTION:", err);
@@ -65,7 +62,7 @@ io.on("connection", (socket) => {
     onlineUsers.delete(userId);
     socketToUser.delete(socket.id);
 
-    // End any active 1-to-1 call
+    // End any active call
     const otherUser = activeCalls.get(userId);
     if (otherUser) {
       const otherSocket = onlineUsers.get(otherUser);
@@ -80,39 +77,14 @@ io.on("connection", (socket) => {
       callTimers.delete(userId);
     }
 
-    // Remove from any group call rooms
-    rooms.forEach((room, roomId) => {
-      const participantIndex = room.participants.findIndex(p => p.userId === userId);
-      if (participantIndex !== -1) {
-        room.participants.splice(participantIndex, 1);
-        
-        // Notify other participants
-        room.participants.forEach(participant => {
-          const participantSocket = onlineUsers.get(participant.userId);
-          if (participantSocket) {
-            io.to(participantSocket).emit("participant-left", {
-              userId,
-              username: "User"
-            });
-          }
-        });
-
-        // Delete room if empty
-        if (room.participants.length === 0) {
-          rooms.delete(roomId);
-          console.log(`🗑️  Room ${roomId} deleted (empty)`);
-        }
-      }
-    });
-
     // Broadcast updated online users
     io.emit("online-users", Array.from(onlineUsers.keys()));
     console.log(`🔴 User ${userId} went OFFLINE`);
   });
 
-  /* ===== 1-TO-1 CALL USER ===== */
+  /* ===== CALL USER ===== */
   socket.on("call-user", ({ toUserId, fromUserId, fromUsername, offer }) => {
-    console.log(`📞 1-to-1 Call request: ${fromUsername || fromUserId} → ${toUserId}`);
+    console.log(`📞 Call request: ${fromUsername || fromUserId} → ${toUserId}`);
 
     // Check if target user is busy
     if (activeCalls.has(toUserId)) {
@@ -136,9 +108,9 @@ io.on("connection", (socket) => {
     }
   });
 
-  /* ===== ACCEPT 1-TO-1 CALL ===== */
+  /* ===== ACCEPT CALL ===== */
   socket.on("accept-call", ({ toUserId, fromUserId, answer }) => {
-    console.log(`✅ 1-to-1 Call accepted: ${fromUserId} ↔️ ${toUserId}`);
+    console.log(`✅ Call accepted: ${fromUserId} ↔️ ${toUserId}`);
 
     // Mark both users as in active call
     activeCalls.set(fromUserId, toUserId);
@@ -156,9 +128,9 @@ io.on("connection", (socket) => {
     }
   });
 
-  /* ===== DECLINE 1-TO-1 CALL ===== */
+  /* ===== DECLINE CALL ===== */
   socket.on("decline-call", ({ toUserId, fromUserId }) => {
-    console.log(`📵 1-to-1 Call declined: ${fromUserId} declined call from ${toUserId}`);
+    console.log(`📵 Call declined: ${fromUserId} declined call from ${toUserId}`);
 
     const callerSocket = onlineUsers.get(toUserId);
     if (callerSocket) {
@@ -167,29 +139,21 @@ io.on("connection", (socket) => {
     }
   });
 
-  /* ===== ICE CANDIDATE (1-TO-1) ===== */
-  socket.on("ice-candidate", ({ toUserId, fromUserId, candidate, roomId }) => {
-    if (roomId) {
-      // Group call ICE candidate
-      const targetSocket = onlineUsers.get(toUserId);
-      if (targetSocket) {
-        io.to(targetSocket).emit("ice-candidate", { candidate, fromUserId });
-      }
-    } else {
-      // 1-to-1 call ICE candidate
-      const targetSocket = onlineUsers.get(toUserId);
-      if (targetSocket) {
-        io.to(targetSocket).emit("ice-candidate", { candidate, fromUserId });
-      }
+  /* ===== ICE CANDIDATE ===== */
+  socket.on("ice-candidate", ({ toUserId, candidate }) => {
+    const targetSocket = onlineUsers.get(toUserId);
+    if (targetSocket) {
+      io.to(targetSocket).emit("ice-candidate", { candidate });
+      // console.log(`🧊 ICE candidate sent to ${toUserId}`);
     }
   });
 
-  /* ===== END 1-TO-1 CALL ===== */
+  /* ===== END CALL ===== */
   socket.on("end-call", ({ toUserId }) => {
     const currentUser = socketToUser.get(socket.id);
     const targetSocket = onlineUsers.get(toUserId);
 
-    console.log(`📵 1-to-1 Call ended: ${currentUser} ended call with ${toUserId}`);
+    console.log(`📵 Call ended: ${currentUser} ended call with ${toUserId}`);
 
     // Notify other user
     if (targetSocket) {
@@ -210,179 +174,6 @@ io.on("connection", (socket) => {
     callTimers.delete(currentUser);
   });
 
-  /* ==================== GROUP CALL EVENTS ==================== */
-
-  /* ===== CREATE ROOM ===== */
-  socket.on("create-room", ({ roomId, userId, username, profilePic }) => {
-    console.log(`🏠 Creating room: ${roomId} by ${username}`);
-
-    // Create room
-    rooms.set(roomId, {
-      participants: [{
-        userId,
-        username,
-        profilePic,
-        socketId: socket.id
-      }],
-      createdAt: Date.now()
-    });
-
-    // Join socket room
-    socket.join(roomId);
-
-    // Notify creator
-    socket.emit("room-joined", {
-      roomId,
-      participants: rooms.get(roomId).participants
-    });
-
-    console.log(`✅ Room ${roomId} created with 1 participant`);
-  });
-
-  /* ===== JOIN ROOM ===== */
-  socket.on("join-room", async ({ roomId, userId, username, profilePic }) => {
-    console.log(`👤 ${username} joining room: ${roomId}`);
-
-    const room = rooms.get(roomId);
-    
-    if (!room) {
-      console.log(`❌ Room ${roomId} not found`);
-      socket.emit("room-not-found");
-      return;
-    }
-
-    // Check if user already in room
-    if (room.participants.find(p => p.userId === userId)) {
-      console.log(`⚠️  User ${userId} already in room ${roomId}`);
-      socket.emit("already-in-room");
-      return;
-    }
-
-    // Join socket room
-    socket.join(roomId);
-
-    // Add participant
-    room.participants.push({
-      userId,
-      username,
-      profilePic,
-      socketId: socket.id
-    });
-
-    // Notify joining user with current participants
-    socket.emit("room-joined", {
-      roomId,
-      participants: room.participants
-    });
-
-    // Notify existing participants about new user
-    // They need to send offers to the new user
-    room.participants.forEach(participant => {
-      if (participant.userId !== userId) {
-        const participantSocket = onlineUsers.get(participant.userId);
-        if (participantSocket) {
-          io.to(participantSocket).emit("new-participant-joining", {
-            userId,
-            username,
-            profilePic
-          });
-        }
-      }
-    });
-
-    console.log(`✅ ${username} joined room ${roomId}. Total participants: ${room.participants.length}`);
-  });
-
-  /* ===== INVITE TO GROUP CALL ===== */
-  socket.on("invite-to-group-call", ({ toUserId, fromUserId, fromUsername, roomId }) => {
-    console.log(`📨 Group call invitation: ${fromUsername} → ${toUserId} (Room: ${roomId})`);
-
-    const targetSocket = onlineUsers.get(toUserId);
-    if (targetSocket) {
-      io.to(targetSocket).emit("incoming-group-call", {
-        fromUserId,
-        fromUsername,
-        roomId
-      });
-      console.log(`✅ Sent group call invitation to ${toUserId}`);
-    } else {
-      console.log(`❌ User ${toUserId} is not online`);
-    }
-  });
-
-  /* ===== DECLINE GROUP CALL ===== */
-  socket.on("decline-group-call", ({ toUserId, fromUserId, roomId }) => {
-    console.log(`📵 Group call declined: ${fromUserId} declined invitation to ${roomId}`);
-
-    const inviterSocket = onlineUsers.get(toUserId);
-    if (inviterSocket) {
-      io.to(inviterSocket).emit("group-call-declined", { fromUserId, roomId });
-    }
-  });
-
-  /* ===== WEBRTC OFFER (GROUP CALL) ===== */
-  socket.on("webrtc-offer", ({ roomId, toUserId, fromUserId, offer }) => {
-    console.log(`📡 WebRTC offer in room ${roomId}: ${fromUserId} → ${toUserId}`);
-
-    const targetSocket = onlineUsers.get(toUserId);
-    if (targetSocket) {
-      io.to(targetSocket).emit("webrtc-offer", {
-        fromUserId,
-        offer
-      });
-    }
-  });
-
-  /* ===== WEBRTC ANSWER (GROUP CALL) ===== */
-  socket.on("webrtc-answer", ({ roomId, toUserId, fromUserId, answer }) => {
-    console.log(`📡 WebRTC answer in room ${roomId}: ${fromUserId} → ${toUserId}`);
-
-    const targetSocket = onlineUsers.get(toUserId);
-    if (targetSocket) {
-      io.to(targetSocket).emit("webrtc-answer", {
-        fromUserId,
-        answer
-      });
-    }
-  });
-
-  /* ===== LEAVE ROOM ===== */
-  socket.on("leave-room", ({ roomId, userId }) => {
-    console.log(`👋 ${userId} leaving room: ${roomId}`);
-
-    const room = rooms.get(roomId);
-    if (!room) return;
-
-    // Remove participant
-    const participantIndex = room.participants.findIndex(p => p.userId === userId);
-    if (participantIndex !== -1) {
-      const participant = room.participants[participantIndex];
-      room.participants.splice(participantIndex, 1);
-
-      // Leave socket room
-      socket.leave(roomId);
-
-      // Notify other participants
-      room.participants.forEach(p => {
-        const participantSocket = onlineUsers.get(p.userId);
-        if (participantSocket) {
-          io.to(participantSocket).emit("participant-left", {
-            userId,
-            username: participant.username
-          });
-        }
-      });
-
-      console.log(`✅ ${participant.username} left room ${roomId}. Remaining: ${room.participants.length}`);
-
-      // Delete room if empty
-      if (room.participants.length === 0) {
-        rooms.delete(roomId);
-        console.log(`🗑️  Room ${roomId} deleted (empty)`);
-      }
-    }
-  });
-
   /* ===== DISCONNECT ===== */
   socket.on("disconnect", () => {
     const userId = socketToUser.get(socket.id);
@@ -397,7 +188,7 @@ io.on("connection", (socket) => {
     onlineUsers.delete(userId);
     socketToUser.delete(socket.id);
 
-    // End any active 1-to-1 call
+    // End any active call
     const otherUser = activeCalls.get(userId);
     if (otherUser) {
       const otherSocket = onlineUsers.get(otherUser);
@@ -412,34 +203,6 @@ io.on("connection", (socket) => {
       callTimers.delete(userId);
     }
 
-    // Remove from any group call rooms
-    rooms.forEach((room, roomId) => {
-      const participantIndex = room.participants.findIndex(p => p.userId === userId);
-      if (participantIndex !== -1) {
-        const participant = room.participants[participantIndex];
-        room.participants.splice(participantIndex, 1);
-        
-        // Notify other participants
-        room.participants.forEach(p => {
-          const participantSocket = onlineUsers.get(p.userId);
-          if (participantSocket) {
-            io.to(participantSocket).emit("participant-left", {
-              userId,
-              username: participant.username
-            });
-          }
-        });
-
-        console.log(`👋 ${participant.username} removed from room ${roomId} (disconnect)`);
-
-        // Delete room if empty
-        if (room.participants.length === 0) {
-          rooms.delete(roomId);
-          console.log(`🗑️  Room ${roomId} deleted (empty)`);
-        }
-      }
-    });
-
     // Broadcast updated online users
     const onlineUsersList = Array.from(onlineUsers.keys());
     io.emit("online-users", onlineUsersList);
@@ -450,22 +213,10 @@ io.on("connection", (socket) => {
   socket.on("get-online-users", () => {
     socket.emit("online-users", Array.from(onlineUsers.keys()));
   });
-
-  /* ===== DEBUG: Get active rooms ===== */
-  socket.on("get-active-rooms", () => {
-    const roomsList = Array.from(rooms.entries()).map(([roomId, room]) => ({
-      roomId,
-      participantCount: room.participants.length,
-      participants: room.participants.map(p => p.username)
-    }));
-    socket.emit("active-rooms", roomsList);
-    console.log("📊 Active rooms:", roomsList);
-  });
 });
 
 /* ================= SERVER ================= */
 server.listen(5000, () => {
   console.log("🚀 Server running on port 5000");
   console.log("📡 Socket.IO ready for connections");
-  console.log("👥 Group call support enabled");
 });
