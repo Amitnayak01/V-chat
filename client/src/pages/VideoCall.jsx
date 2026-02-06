@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { useCall } from "../CallContext";
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Phone, Monitor, Grid, Volume2, VolumeX, Maximize, Minimize, User, Wifi, WifiOff } from "lucide-react";
 import { RefreshCcw } from "lucide-react";
+import { UserPlus } from "lucide-react";
 
 
 const ICE_CONFIG = {
@@ -975,6 +976,7 @@ useEffect(() => {
             )}
           </div>
           <div className="header-actions">
+
           <button 
   onClick={() => setLayoutMode(m => m === "focus" ? "grid" : "focus")} 
   className="control-btn" 
@@ -994,6 +996,24 @@ useEffect(() => {
             <button onClick={toggleFullscreen} className="control-btn" title="Fullscreen">
               {isFullscreen ? <Minimize size={20} color="#fff" /> : <Maximize size={20} color="#fff" />}
             </button>
+            <button 
+  onClick={() => {
+    // Generate unique room ID
+    const roomId = `room_${currentUserId}_${Date.now()}`;
+    
+    // Create room and navigate
+    socket.emit("create-group-call", {
+      roomId,
+      creatorId: currentUserId
+    });
+    
+    navigate(`/group-call/${roomId}`);
+  }} 
+  className="control-btn" 
+  title="Convert to Group Call"
+>
+  <UserPlus size={isMobile ? 18 : 20} color="#fff" />
+</button>
           </div>
         </div>
       </div>

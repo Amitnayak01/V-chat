@@ -7,6 +7,7 @@ import VideoCall from "./pages/VideoCall";
 import Profile from "./pages/Profile";
 import Home from "./pages/Home";
 import UserProfile from "./pages/UserProfile";
+import GroupCall from "./pages/GroupCall";
 
 const PrivateRoute = ({ children }) =>
   localStorage.getItem("token") ? children : <Navigate to="/login" />;
@@ -18,7 +19,7 @@ export default function App() {
       <CallProvider>
         <Routes>
           <Route path="/profile/:id" element={<PrivateRoute><UserProfile /></PrivateRoute>} />
-
+              <Route path="/group-call/:roomId" element={<GroupCall />} />
           {/* Home page after login */}
           <Route path="/" element={<PrivateRoute><Home /></PrivateRoute>} />
 

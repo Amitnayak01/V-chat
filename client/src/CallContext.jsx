@@ -10,6 +10,8 @@ export const useCall = () => useContext(CallContext);
 export const CallProvider = ({ children }) => {
   const navigate = useNavigate();
   const [incomingCall, setIncomingCall] = useState(null);
+  const [incomingGroupInvite, setIncomingGroupInvite] = useState(null);
+  const [onlineUsers, setOnlineUsers] = useState([]);
   const currentUserId = localStorage.getItem("userId");
 
   /* 🔥 REGISTER USER ONLINE ASAP */
@@ -41,14 +43,34 @@ export const CallProvider = ({ children }) => {
       console.log("📴 Call ended → clearing incomingCall state");
       setIncomingCall(null);
     };
+     
 
     socket.on("incoming-call", handleIncomingCall);
     socket.on("call-ended", handleCallEnded);
 
-    return () => {
-      socket.off("incoming-call", handleIncomingCall);
-      socket.off("call-ended", handleCallEnded);
-    };
+    const handleIncomingGroupInvite = ({ roomId, from, fromUsername }) => {
+  console.log("📧 GROUP INVITE RECEIVED from:", fromUsername);
+  setIncomingGroupInvite({ roomId, from, fromUsername });
+};
+
+const handleGroupInviteDeclined = ({ userId }) => {
+  console.log("❌ Group invite declined by:", userId);
+};
+
+socket.on("incoming-group-invite", handleIncomingGroupInvite);
+socket.on("group-invite-declined", handleGroupInviteDeclined);
+socket.on("online-users", (users) => {
+  console.log("👥 Online users updated:", users);
+  setOnlineUsers(users);
+});
+
+return () => {
+  socket.off("incoming-call", handleIncomingCall);
+  socket.off("call-ended", handleCallEnded);
+  socket.off("incoming-group-invite", handleIncomingGroupInvite);
+  socket.off("group-invite-declined", handleGroupInviteDeclined);
+  socket.off("online-users");
+};
   }, []);
 
   const acceptCall = () => {
@@ -76,8 +98,56 @@ export const CallProvider = ({ children }) => {
     setIncomingCall(null);
   };
 
+
+  const acceptGroupInvite = () => {
+  if (!incomingGroupInvite) return;
+  
+  console.log("✅ Accepting group call invite");
+  
+  socket.emit("group-call-accepted", {
+    roomId: incomingGroupInvite.roomId,
+    userId: currentUserId,
+    username: localStorage.getItem("username") || "User"
+  });
+  
+  navigate(`/group-call/${incomingGroupInvite.roomId}`);
+  setIncomingGroupInvite(null);
+};
+
+const declineGroupInvite = () => {
+  if (!incomingGroupInvite) return;
+  
+  console.log("❌ Declining group call invite");
+  
+  socket.emit("group-call-declined", {
+    roomId: incomingGroupInvite.roomId,
+    from: incomingGroupInvite.from,
+    userId: currentUserId
+  });
+  
+  setIncomingGroupInvite(null);
+};
+
+
+
+
+
+
+
+
+
   return (
-    <CallContext.Provider value={{ socket, incomingCall, setIncomingCall }}>
+    <CallContext.Provider value={{ 
+      socket,
+      incomingCall, 
+      setIncomingCall, 
+      incomingGroupInvite,
+      setIncomingGroupInvite,
+       acceptGroupInvite, 
+       declineGroupInvite,
+       onlineUsers
+
+       }}>
       {children}
 
       {incomingCall && (
@@ -99,6 +169,28 @@ export const CallProvider = ({ children }) => {
           </div>
         </div>
       )}
+
+
+
+      {incomingGroupInvite && (
+  <div style={overlayStyle}>
+    <div style={modalStyle}>
+      <div style={iconContainerStyle}>
+        <Phone size={50} color="#3b82f6" />
+      </div>
+      <h2 style={titleStyle}>Group Call Invite</h2>
+      <p style={textStyle}>{incomingGroupInvite.fromUsername} invited you to a group video call</p>
+      <div style={buttonContainerStyle}>
+        <button onClick={acceptGroupInvite} style={{...acceptButtonStyle, background: "#3b82f6"}}>
+          Join Call
+        </button>
+        <button onClick={declineGroupInvite} style={declineButtonStyle}>
+          Decline
+        </button>
+      </div>
+    </div>
+  </div>
+)}
     </CallContext.Provider>
   );
 };
