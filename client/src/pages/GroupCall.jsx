@@ -112,6 +112,37 @@ export default function GroupCall() {
     init();
   }, []);
 
+
+  // Fetch usernames for current participants
+useEffect(() => {
+  const fetchParticipantNames = async () => {
+    const unknownUsers = participants.filter(id => !usernames.has(id) && id !== currentUserId);
+    if (unknownUsers.length === 0) return;
+
+    try {
+      const response = await fetch("https://video-call-961n.onrender.com/api/users/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: unknownUsers })
+      });
+
+      const userMap = await response.json();
+      
+      const newUsernames = new Map(usernames);
+      Object.keys(userMap).forEach(userId => {
+        newUsernames.set(userId, userMap[userId].username);
+      });
+      
+      setUsernames(newUsernames);
+    } catch (err) {
+      console.error("Failed to fetch participant names:", err);
+    }
+  };
+
+  fetchParticipantNames();
+}, [participants.join(",")]);
+
+
   // Socket Events
   useEffect(() => {
     // User joined
@@ -263,9 +294,9 @@ export default function GroupCall() {
   };
 
   // Available users (online but not in call)
-  const availableUsers = onlineUsers.filter(
-    id => id !== currentUserId && !participants.includes(id)
-  );
+const availableUsers = onlineUsers.filter(
+  user => user.userId !== currentUserId && !participants.includes(user.userId)
+);
 
   return (
     <div style={containerStyle}>
@@ -330,21 +361,21 @@ export default function GroupCall() {
             </div>
 
             <div style={userListStyle}>
-             {availableUsers.length === 0 ? (
-  <p style={emptyTextStyle}>No available users</p>
-) : (
-  availableUsers.map(userId => (
-    <label key={userId} style={userItemStyle}>
-      <input
-        type="checkbox"
-        checked={selectedUsers.includes(userId)}
-        onChange={() => toggleUserSelection(userId)}
-        style={{ cursor: 'pointer' }}
-      />
-      <span style={{ cursor: 'pointer' }}>User {userId.slice(0, 8)}</span>
-    </label>
-  ))
-)}
+              {availableUsers.length === 0 ? (
+                <p style={emptyTextStyle}>No available users</p>
+              ) : (
+                availableUsers.map(user => (
+                  <label key={user.userId} style={userItemStyle}>
+                    <input
+                      type="checkbox"
+                      checked={selectedUsers.includes(user.userId)}
+                      onChange={() => toggleUserSelection(user.userId)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span style={{ cursor: 'pointer' }}>{user.username}</span>
+                  </label>
+                ))
+              )}
             </div>
 
             <button

@@ -25,6 +25,36 @@ const activeCalls = new Map();  // userId -> otherUserId
 const callTimers = new Map();   // userId -> startTime
 const groupCallRooms = new Map(); // roomId -> { participants: [userId], creatorId }
 
+/* ================= API ENDPOINT TO GET USER INFO ================= */
+const User = require("./models/User"); // Make sure you have the User model
+
+app.get("/api/users/:userId", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId).select("username email");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json({ userId: user._id, username: user.username, email: user.email });
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Bulk fetch multiple users
+app.post("/api/users/bulk", async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    const users = await User.find({ _id: { $in: userIds } }).select("username email");
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user._id] = { username: user.username, email: user.email };
+    });
+    res.json(userMap);
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 process.on("uncaughtException", err => {
   console.error("UNCAUGHT EXCEPTION:", err);
 });
@@ -34,7 +64,7 @@ io.on("connection", (socket) => {
   console.log("🔌 Socket connected:", socket.id);
 
   /* ===== USER ONLINE ===== */
-  socket.on("user-online", (userId) => {
+  socket.on("user-online", ({ userId, username }) => {
     if (!userId) {
       console.log("⚠️  No userId provided for user-online");
       return;
@@ -47,12 +77,15 @@ io.on("connection", (socket) => {
       socketToUser.delete(oldSocket);
     }
 
-    onlineUsers.set(userId, socket.id);
-    socketToUser.set(socket.id, userId);
+   onlineUsers.set(userId, { socketId: socket.id, username });
+socketToUser.set(socket.id, { userId, username });
 
-    // Broadcast updated online users list to ALL clients
-    const onlineUsersList = Array.from(onlineUsers.keys());
-    io.emit("online-users", onlineUsersList);
+// Broadcast with usernames
+const onlineUsersList = Array.from(onlineUsers.entries()).map(([id, data]) => ({
+  userId: id,
+  username: data.username
+}));
+io.emit("online-users", onlineUsersList);
     console.log(`🟢 User ${userId} is now ONLINE (${onlineUsersList.length} users online)`);
   });
 
@@ -306,6 +339,8 @@ io.on("connection", (socket) => {
     }
   });
 
+
+  
   /* ===== GROUP CALL ANSWER (WebRTC) ===== */
   socket.on("group-call-answer", ({ roomId, toUserId, fromUserId, answer }) => {
     const targetSocket = onlineUsers.get(toUserId);

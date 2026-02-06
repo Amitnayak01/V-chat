@@ -19,12 +19,18 @@ export const CallProvider = ({ children }) => {
     if (!currentUserId) return;
 
     if (socket.connected) {
-      socket.emit("user-online", currentUserId);
+      socket.emit("user-online", { 
+  userId: currentUserId, 
+  username: localStorage.getItem("username") || "User" 
+});
     }
 
     socket.on("connect", () => {
       console.log("🟢 Socket connected:", socket.id);
-      socket.emit("user-online", currentUserId);
+      socket.emit("user-online", { 
+  userId: currentUserId, 
+  username: localStorage.getItem("username") || "User" 
+});
     });
 
     return () => {
@@ -59,9 +65,11 @@ const handleGroupInviteDeclined = ({ userId }) => {
 
 socket.on("incoming-group-invite", handleIncomingGroupInvite);
 socket.on("group-invite-declined", handleGroupInviteDeclined);
+
+
 socket.on("online-users", (users) => {
   console.log("👥 Online users updated:", users);
-  setOnlineUsers(users);
+  setOnlineUsers(users); // Now users is an array of {userId, username}
 });
 
 return () => {
