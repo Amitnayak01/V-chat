@@ -24,6 +24,7 @@ export default function GroupCall() {
   const localStream = useRef();
   const peerConnections = useRef(new Map()); // userId -> RTCPeerConnection
   const remoteVideos = useRef(new Map()); // userId -> video element
+  const [usernames, setUsernames] = useState(new Map()); // userId -> username
 
   // States
   const [participants, setParticipants] = useState([currentUserId]);
@@ -114,15 +115,18 @@ export default function GroupCall() {
   // Socket Events
   useEffect(() => {
     // User joined
-    socket.on("user-joined-group-call", async ({ userId, username, participants: newParticipants }) => {
-      console.log(`✅ ${username} joined group call`);
-      
-      setParticipants(prev => {
-        if (!prev.includes(userId)) {
-          return [...prev, userId];
-        }
-        return prev;
-      });
+   socket.on("user-joined-group-call", async ({ userId, username, participants: newParticipants }) => {
+  console.log(`✅ ${username} joined group call`);
+  
+  // Store username
+  setUsernames(prev => new Map(prev).set(userId, username));
+  
+  setParticipants(prev => {
+    if (!prev.includes(userId)) {
+      return [...prev, userId];
+    }
+    return prev;
+  });
 
       // Create offer for new user
       const pc = createPeerConnection(userId);
@@ -290,7 +294,7 @@ export default function GroupCall() {
                 playsInline
                 style={videoStyle}
               />
-              <div style={labelStyle}>User {userId.slice(0, 6)}</div>
+              <div style={labelStyle}>{usernames.get(userId) || `User ${userId.slice(0, 6)}`}</div>
             </div>
           ))}
       </div>
@@ -326,20 +330,21 @@ export default function GroupCall() {
             </div>
 
             <div style={userListStyle}>
-              {availableUsers.length === 0 ? (
-                <p style={emptyTextStyle}>No available users</p>
-              ) : (
-                availableUsers.map(userId => (
-                  <label key={userId} style={userItemStyle}>
-                    <input
-                      type="checkbox"
-                      checked={selectedUsers.includes(userId)}
-                      onChange={() => toggleUserSelection(userId)}
-                    />
-                    <span>User {userId.slice(0, 8)}</span>
-                  </label>
-                ))
-              )}
+             {availableUsers.length === 0 ? (
+  <p style={emptyTextStyle}>No available users</p>
+) : (
+  availableUsers.map(userId => (
+    <label key={userId} style={userItemStyle}>
+      <input
+        type="checkbox"
+        checked={selectedUsers.includes(userId)}
+        onChange={() => toggleUserSelection(userId)}
+        style={{ cursor: 'pointer' }}
+      />
+      <span style={{ cursor: 'pointer' }}>User {userId.slice(0, 8)}</span>
+    </label>
+  ))
+)}
             </div>
 
             <button
@@ -477,7 +482,6 @@ const userListStyle = {
   overflowY: "auto",
   marginBottom: "20px"
 };
-
 const userItemStyle = {
   display: "flex",
   alignItems: "center",
@@ -486,9 +490,14 @@ const userItemStyle = {
   cursor: "pointer",
   borderRadius: "5px",
   marginBottom: "5px",
-  background: "rgba(255,255,255,0.05)"
+  background: "rgba(255,255,255,0.05)",
+  transition: "background 0.2s ease",
+  userSelect: "none"
 };
 
+const userItemHoverStyle = {
+  background: "rgba(255,255,255,0.1)"
+};
 const emptyTextStyle = {
   textAlign: "center",
   color: "rgba(255,255,255,0.5)",
