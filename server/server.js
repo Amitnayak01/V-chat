@@ -23,6 +23,7 @@ const onlineUsers = new Map();  // userId -> socketId
 const socketToUser = new Map(); // socketId -> userId
 const activeCalls = new Map();  // userId -> otherUserId
 const callTimers = new Map();   // userId -> startTime
+const groupCallRooms = new Map(); // roomId -> { participants: [userId], creatorId }
 
 process.on("uncaughtException", err => {
   console.error("UNCAUGHT EXCEPTION:", err);
@@ -213,153 +214,153 @@ io.on("connection", (socket) => {
   socket.on("get-online-users", () => {
     socket.emit("online-users", Array.from(onlineUsers.keys()));
   });
-});
 
-/* ================= GROUP CALL EVENTS ================= */
-const groupCallRooms = new Map(); // roomId -> { participants: [userId], peerConnections: Map }
-
-/* ===== CREATE GROUP CALL ===== */
-socket.on("create-group-call", ({ roomId, creatorId }) => {
-  if (!groupCallRooms.has(roomId)) {
-    groupCallRooms.set(roomId, {
-      participants: [creatorId],
-      creatorId: creatorId
-    });
-    console.log(`📹 Group call room ${roomId} created by ${creatorId}`);
-  }
-});
-
-/* ===== GROUP CALL INVITE ===== */
-socket.on("group-call-invite", ({ roomId, from, toUsers, fromUsername }) => {
-  console.log(`📧 Group call invite from ${fromUsername} to:`, toUsers);
-
-  toUsers.forEach(userId => {
-    const targetSocket = onlineUsers.get(userId);
-    if (targetSocket) {
-      io.to(targetSocket).emit("incoming-group-invite", {
-        roomId,
-        from,
-        fromUsername
-      });
-      console.log(`✅ Sent group invite to ${userId}`);
-    } else {
-      console.log(`❌ User ${userId} not online`);
-    }
-  });
-});
-
-/* ===== GROUP CALL ACCEPTED ===== */
-socket.on("group-call-accepted", ({ roomId, userId, username }) => {
-  console.log(`✅ ${username} accepted group call ${roomId}`);
-
-  // Add user to room
-  if (!groupCallRooms.has(roomId)) {
-    groupCallRooms.set(roomId, { participants: [] });
-  }
-
-  const room = groupCallRooms.get(roomId);
-  if (!room.participants.includes(userId)) {
-    room.participants.push(userId);
-  }
-
-  // Notify all participants in the room
-  room.participants.forEach(participantId => {
-    const participantSocket = onlineUsers.get(participantId);
-    if (participantSocket && participantId !== userId) {
-      io.to(participantSocket).emit("user-joined-group-call", {
-        roomId,
-        userId,
-        username,
-        participants: room.participants
-      });
-    }
-  });
-
-  // Send current participants list to new user
-  socket.emit("group-call-participants", {
-    roomId,
-    participants: room.participants
-  });
-
-  console.log(`📹 Room ${roomId} participants:`, room.participants);
-});
-
-/* ===== GROUP CALL DECLINED ===== */
-socket.on("group-call-declined", ({ roomId, from, userId }) => {
-  console.log(`❌ ${userId} declined group call ${roomId}`);
+  /* ================= GROUP CALL EVENTS ================= */
   
-  const creatorSocket = onlineUsers.get(from);
-  if (creatorSocket) {
-    io.to(creatorSocket).emit("group-invite-declined", { userId });
-  }
-});
+  /* ===== CREATE GROUP CALL ===== */
+  socket.on("create-group-call", ({ roomId, creatorId }) => {
+    if (!groupCallRooms.has(roomId)) {
+      groupCallRooms.set(roomId, {
+        participants: [creatorId],
+        creatorId: creatorId
+      });
+      console.log(`📹 Group call room ${roomId} created by ${creatorId}`);
+    }
+  });
 
-/* ===== GROUP CALL OFFER (WebRTC) ===== */
-socket.on("group-call-offer", ({ roomId, toUserId, fromUserId, offer }) => {
-  const targetSocket = onlineUsers.get(toUserId);
-  if (targetSocket) {
-    io.to(targetSocket).emit("group-call-offer-received", {
-      roomId,
-      fromUserId,
-      offer
+  /* ===== GROUP CALL INVITE ===== */
+  socket.on("group-call-invite", ({ roomId, from, toUsers, fromUsername }) => {
+    console.log(`📧 Group call invite from ${fromUsername} to:`, toUsers);
+
+    toUsers.forEach(userId => {
+      const targetSocket = onlineUsers.get(userId);
+      if (targetSocket) {
+        io.to(targetSocket).emit("incoming-group-invite", {
+          roomId,
+          from,
+          fromUsername
+        });
+        console.log(`✅ Sent group invite to ${userId}`);
+      } else {
+        console.log(`❌ User ${userId} not online`);
+      }
     });
-    console.log(`📡 Sent offer from ${fromUserId} to ${toUserId}`);
-  }
-});
+  });
 
-/* ===== GROUP CALL ANSWER (WebRTC) ===== */
-socket.on("group-call-answer", ({ roomId, toUserId, fromUserId, answer }) => {
-  const targetSocket = onlineUsers.get(toUserId);
-  if (targetSocket) {
-    io.to(targetSocket).emit("group-call-answer-received", {
-      roomId,
-      fromUserId,
-      answer
+  /* ===== GROUP CALL ACCEPTED ===== */
+  socket.on("group-call-accepted", ({ roomId, userId, username }) => {
+    console.log(`✅ ${username} accepted group call ${roomId}`);
+
+    // Add user to room
+    if (!groupCallRooms.has(roomId)) {
+      groupCallRooms.set(roomId, { participants: [] });
+    }
+
+    const room = groupCallRooms.get(roomId);
+    if (!room.participants.includes(userId)) {
+      room.participants.push(userId);
+    }
+
+    // Notify all participants in the room
+    room.participants.forEach(participantId => {
+      const participantSocket = onlineUsers.get(participantId);
+      if (participantSocket && participantId !== userId) {
+        io.to(participantSocket).emit("user-joined-group-call", {
+          roomId,
+          userId,
+          username,
+          participants: room.participants
+        });
+      }
     });
-    console.log(`📡 Sent answer from ${fromUserId} to ${toUserId}`);
-  }
-});
 
-/* ===== GROUP CALL ICE CANDIDATE ===== */
-socket.on("group-ice-candidate", ({ roomId, toUserId, fromUserId, candidate }) => {
-  const targetSocket = onlineUsers.get(toUserId);
-  if (targetSocket) {
-    io.to(targetSocket).emit("group-ice-candidate-received", {
+    // Send current participants list to new user
+    socket.emit("group-call-participants", {
       roomId,
-      fromUserId,
-      candidate
+      participants: room.participants
     });
-  }
-});
 
-/* ===== LEAVE GROUP CALL ===== */
-socket.on("leave-group-call", ({ roomId, userId }) => {
-  const room = groupCallRooms.get(roomId);
-  if (!room) return;
+    console.log(`📹 Room ${roomId} participants:`, room.participants);
+  });
 
-  // Remove user from participants
-  room.participants = room.participants.filter(id => id !== userId);
+  /* ===== GROUP CALL DECLINED ===== */
+  socket.on("group-call-declined", ({ roomId, from, userId }) => {
+    console.log(`❌ ${userId} declined group call ${roomId}`);
+    
+    const creatorSocket = onlineUsers.get(from);
+    if (creatorSocket) {
+      io.to(creatorSocket).emit("group-invite-declined", { userId });
+    }
+  });
 
-  // Notify remaining participants
-  room.participants.forEach(participantId => {
-    const participantSocket = onlineUsers.get(participantId);
-    if (participantSocket) {
-      io.to(participantSocket).emit("user-left-group-call", {
+  /* ===== GROUP CALL OFFER (WebRTC) ===== */
+  socket.on("group-call-offer", ({ roomId, toUserId, fromUserId, offer }) => {
+    const targetSocket = onlineUsers.get(toUserId);
+    if (targetSocket) {
+      io.to(targetSocket).emit("group-call-offer-received", {
         roomId,
-        userId,
-        participants: room.participants
+        fromUserId,
+        offer
+      });
+      console.log(`📡 Sent offer from ${fromUserId} to ${toUserId}`);
+    }
+  });
+
+  /* ===== GROUP CALL ANSWER (WebRTC) ===== */
+  socket.on("group-call-answer", ({ roomId, toUserId, fromUserId, answer }) => {
+    const targetSocket = onlineUsers.get(toUserId);
+    if (targetSocket) {
+      io.to(targetSocket).emit("group-call-answer-received", {
+        roomId,
+        fromUserId,
+        answer
+      });
+      console.log(`📡 Sent answer from ${fromUserId} to ${toUserId}`);
+    }
+  });
+
+  /* ===== GROUP CALL ICE CANDIDATE ===== */
+  socket.on("group-ice-candidate", ({ roomId, toUserId, fromUserId, candidate }) => {
+    const targetSocket = onlineUsers.get(toUserId);
+    if (targetSocket) {
+      io.to(targetSocket).emit("group-ice-candidate-received", {
+        roomId,
+        fromUserId,
+        candidate
       });
     }
   });
 
-  // Delete room if empty
-  if (room.participants.length === 0) {
-    groupCallRooms.delete(roomId);
-    console.log(`📹 Room ${roomId} deleted (empty)`);
-  }
+  /* ===== LEAVE GROUP CALL ===== */
+  socket.on("leave-group-call", ({ roomId, userId }) => {
+    const room = groupCallRooms.get(roomId);
+    if (!room) return;
 
-  console.log(`📴 ${userId} left room ${roomId}`);
-});
+    // Remove user from participants
+    room.participants = room.participants.filter(id => id !== userId);
+
+    // Notify remaining participants
+    room.participants.forEach(participantId => {
+      const participantSocket = onlineUsers.get(participantId);
+      if (participantSocket) {
+        io.to(participantSocket).emit("user-left-group-call", {
+          roomId,
+          userId,
+          participants: room.participants
+        });
+      }
+    });
+
+    // Delete room if empty
+    if (room.participants.length === 0) {
+      groupCallRooms.delete(roomId);
+      console.log(`📹 Room ${roomId} deleted (empty)`);
+    }
+
+    console.log(`📴 ${userId} left room ${roomId}`);
+  });
+
+}); // <-- CLOSING BRACE FOR io.on("connection")
 
 /* ================= SERVER ================= */
 server.listen(5000, () => {
