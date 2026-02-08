@@ -9,6 +9,13 @@ import Home from "./pages/Home";
 import UserProfile from "./pages/UserProfile";
 import GroupCall from "./pages/GroupCall";
 
+
+import { MeetingProvider } from "./context/MeetingContext";
+import MeetingRoom from "./pages/MeetingRoom";
+import Recordings from "./pages/Recordings";
+
+
+
 const PrivateRoute = ({ children }) =>
   localStorage.getItem("token") ? children : <Navigate to="/login" />;
 
@@ -26,6 +33,12 @@ export default function App() {
           {/* Auth pages */}
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+
+
+          <Route path="/room/:roomId" element={<MeetingRoom />} />
+          <Route path="/recordings" element={<Recordings />} />
+
+
 
           {/* App pages */}
           <Route path="/call" element={<PrivateRoute><VideoCall /></PrivateRoute>} />

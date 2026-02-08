@@ -11,6 +11,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
+  const [roomIdInput, setRoomIdInput] = useState("");
   const nav = useNavigate();
   const token = localStorage.getItem("token");
 
@@ -106,6 +107,30 @@ export default function Home() {
     ? onlineUsers.filter(id => id !== currentUser._id).length 
     : onlineUsers.length;
 
+  const handleStartMeeting = () => {
+    const roomId = Math.random().toString(36).substring(7);
+    nav(`/room/${roomId}`);
+  };
+
+  const handleCopyMeetingLink = () => {
+    const roomId = Math.random().toString(36).substring(7);
+    const meetingLink = `${window.location.origin}/room/${roomId}`;
+    navigator.clipboard.writeText(meetingLink).then(() => {
+      alert("Meeting link copied to clipboard!");
+    }).catch(() => {
+      alert("Failed to copy link. Please try again.");
+    });
+  };
+
+  const handleJoinRoom = () => {
+    const roomId = roomIdInput.trim();
+    if (roomId) {
+      nav(`/room/${roomId}`);
+    } else {
+      alert("Please enter a room ID");
+    }
+  };
+
   if (loading && users.length === 0) {
     return (
       <div style={{ 
@@ -144,7 +169,7 @@ export default function Home() {
         gap: "15px"
       }}>
         <div>
-          <h1 style={{ margin: "0 0 10px 0" }}>Welcome to Video Call App</h1>
+          <h1 style={{ margin: "0 0 10px 0" }}>Welcome to CollabSpace</h1>
           {currentUser && (
             <div style={{ margin: 0, color: "#888", fontSize: "14px" }}>
               <p style={{ margin: "5px 0" }}>
@@ -196,6 +221,200 @@ export default function Home() {
           </button>
         </div>
       )}
+
+      {/* Quick Actions Section */}
+      <div style={{
+        background: "rgba(255,255,255,0.05)",
+        borderRadius: "15px",
+        padding: "30px",
+        marginBottom: "30px",
+        border: "1px solid rgba(255,255,255,0.1)"
+      }}>
+        <h2 style={{ 
+          margin: "0 0 20px 0", 
+          fontSize: "20px",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          fontWeight: "500"
+        }}>
+          ⚡ Quick Actions
+        </h2>
+
+        {/* Start Meeting Button */}
+        <button
+          onClick={handleStartMeeting}
+          style={{
+            background: "linear-gradient(135deg, #9C27B0 0%, #E91E63 100%)",
+            color: "white",
+            padding: "18px 24px",
+            borderRadius: "10px",
+            border: "none",
+            cursor: "pointer",
+            fontWeight: "600",
+            fontSize: "16px",
+            width: "100%",
+            marginBottom: "15px",
+            transition: "all 0.3s",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "10px"
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.transform = "translateY(-2px)";
+            e.target.style.boxShadow = "0 8px 20px rgba(156, 39, 176, 0.4)";
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.transform = "translateY(0)";
+            e.target.style.boxShadow = "none";
+          }}
+        >
+          📹 Start Meeting
+        </button>
+
+        {/* Copy Meeting Link Button */}
+        <button
+          onClick={handleCopyMeetingLink}
+          style={{
+            background: "rgba(255,255,255,0.1)",
+            color: "white",
+            padding: "18px 24px",
+            borderRadius: "10px",
+            border: "2px solid rgba(255,255,255,0.2)",
+            cursor: "pointer",
+            fontWeight: "500",
+            fontSize: "16px",
+            width: "100%",
+            marginBottom: "25px",
+            transition: "all 0.3s",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "10px"
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.background = "rgba(255,255,255,0.15)";
+            e.target.style.borderColor = "rgba(255,255,255,0.3)";
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.background = "rgba(255,255,255,0.1)";
+            e.target.style.borderColor = "rgba(255,255,255,0.2)";
+          }}
+        >
+          📋 Copy Meeting Link
+        </button>
+
+        {/* Join by Room ID Section */}
+        <div>
+          <h3 style={{ 
+            margin: "0 0 15px 0", 
+            fontSize: "16px",
+            fontWeight: "500"
+          }}>
+            Join by Room ID
+          </h3>
+          <div style={{ 
+            display: "flex", 
+            gap: "10px",
+            flexWrap: "wrap"
+          }}>
+            <input
+              type="text"
+              placeholder="Enter room ID..."
+              value={roomIdInput}
+              onChange={(e) => setRoomIdInput(e.target.value)}
+              style={{
+                flex: "1",
+                minWidth: "200px",
+                padding: "14px 18px",
+                borderRadius: "8px",
+                border: "2px solid rgba(255,255,255,0.2)",
+                background: "rgba(255,255,255,0.05)",
+                color: "white",
+                fontSize: "15px",
+                outline: "none",
+                transition: "all 0.2s"
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = "#2196F3";
+                e.target.style.background = "rgba(255,255,255,0.08)";
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "rgba(255,255,255,0.2)";
+                e.target.style.background = "rgba(255,255,255,0.05)";
+              }}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleJoinRoom();
+                }
+              }}
+            />
+            <button
+              onClick={handleJoinRoom}
+              style={{
+                background: "#9C27B0",
+                color: "white",
+                padding: "14px 32px",
+                borderRadius: "8px",
+                border: "none",
+                cursor: "pointer",
+                fontWeight: "600",
+                fontSize: "15px",
+                transition: "all 0.2s",
+                whiteSpace: "nowrap"
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = "#7B1FA2";
+                e.target.style.transform = "translateY(-1px)";
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = "#9C27B0";
+                e.target.style.transform = "translateY(0)";
+              }}
+            >
+              Join
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Connection Status */}
+      <div style={{
+        background: "rgba(255,255,255,0.05)",
+        borderRadius: "10px",
+        padding: "15px 20px",
+        marginBottom: "30px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        border: "1px solid rgba(255,255,255,0.1)"
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{
+            width: "10px",
+            height: "10px",
+            borderRadius: "50%",
+            background: "#00ff00",
+            boxShadow: "0 0 10px #00ff00"
+          }}></div>
+          <span style={{ fontSize: "14px", fontWeight: "500" }}>Connected</span>
+        </div>
+        <button
+          onClick={refreshUsers}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "#888",
+            cursor: "pointer",
+            fontSize: "18px",
+            padding: "5px"
+          }}
+          title="Refresh"
+        >
+          🔄
+        </button>
+      </div>
 
       {/* Action Buttons */}
       <div style={{ 

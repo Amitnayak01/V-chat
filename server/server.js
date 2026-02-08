@@ -3,6 +3,8 @@ const http = require("http");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const { Server } = require("socket.io");
+const fs = require("fs");
+const path = require("path");
 
 /* ================= DB ================= */
 mongoose.connect("mongodb+srv://amitkumarnayak330_db_user:YMwkvBag3LpTT4rJ@cluster0.vppxlxb.mongodb.net/Chat?appName=Cluster0")
@@ -13,12 +15,31 @@ mongoose.connect("mongodb+srv://amitkumarnayak330_db_user:YMwkvBag3LpTT4rJ@clust
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log("📁 Created uploads directory");
+}
+
+// Serve static files from uploads directory
+app.use("/uploads", express.static("uploads"));
+
+// Existing routes
 app.use("/api/auth", require("./routes/auth"));
 
+// NEW: Meeting routes
+app.use("/api/meetings", require("./routes/meetingRoutes"));
+
+/* ================= CREATE SERVER & SOCKET.IO ================= */
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-/* ================= MAPS ================= */
+// Make io accessible to routes (needed for file upload notifications)
+app.set("io", io);
+
+/* ================= MAPS FOR 1-TO-1 CALLS ================= */
 const onlineUsers = new Map();  // userId -> socketId
 const socketToUser = new Map(); // socketId -> userId
 const activeCalls = new Map();  // userId -> otherUserId
@@ -59,7 +80,7 @@ process.on("uncaughtException", err => {
   console.error("UNCAUGHT EXCEPTION:", err);
 });
 
-/* ================= SOCKET ================= */
+/* ================= SOCKET.IO: 1-TO-1 CALL HANDLERS ================= */
 io.on("connection", (socket) => {
   console.log("🔌 Socket connected:", socket.id);
 
@@ -397,8 +418,28 @@ io.emit("online-users", onlineUsersList);
 
 }); // <-- CLOSING BRACE FOR io.on("connection")
 
+/* ================= MEETING ROOM SOCKET HANDLERS ================= */
+// Initialize meeting socket handlers (AFTER io is created)
+try {
+  const meetingSocket = require("./socket/meetingSocket");
+  
+  // Check if it's a function before calling
+  if (typeof meetingSocket === 'function') {
+    meetingSocket(io);
+    console.log("✅ Meeting room socket handlers initialized");
+  } else {
+    console.error("❌ meetingSocket is not a function. Check ./socket/meetingSocket.js export");
+    console.log("   Expected: module.exports = (io) => { ... }");
+    console.log("   Got:", typeof meetingSocket);
+  }
+} catch (error) {
+  console.error("❌ Error loading meeting socket handlers:", error.message);
+  console.log("   Make sure ./socket/meetingSocket.js exists and exports a function");
+}
+
 /* ================= SERVER ================= */
 server.listen(5000, () => {
   console.log("🚀 Server running on port 5000");
   console.log("📡 Socket.IO ready for connections");
+  console.log("🎥 Meeting room system active");
 });
