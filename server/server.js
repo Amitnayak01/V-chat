@@ -5,7 +5,7 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 
 /* ================= DB ================= */
-mongoose.connect("mongodb+srv://amitkumarnayak330_db_user:YMwkvBag3LpTT4rJ@cluster0.vppxlxb.mongodb.net/Chat?appName=Cluster0")
+mongoose.connect("mongodb+srv://amitkumarnayak330_db_user:YMwkvBag3LpTT4rJ@cluster0.vppxlxb.mongodb.net/V-Chat?appName=Cluster0")
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.log("DB Error:", err));
 

@@ -132,7 +132,7 @@ export default function Home() {
         gap: "15px"
       }}>
         <div>
-          <h1 style={{ margin: "0 0 10px 0" }}>Welcome to Video Call App</h1>
+          <h1 style={{ margin: "0 0 10px 0" }}>Welcome to V-Chat</h1>
           {currentUser && (
             <div style={{ margin: 0, color: "#888", fontSize: "14px" }}>
               <p style={{ margin: "5px 0" }}>
