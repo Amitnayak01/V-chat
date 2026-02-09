@@ -87,7 +87,7 @@ const startVideoCall = () => {
       return profilePic;
     }
     
-    const baseUrl = 'http://localhost:5000/';
+    const baseUrl = 'https://v-chat-itn7.onrender.com';
     const cleanPath = profilePic.startsWith('/') ? profilePic : `/${profilePic}`;
     return `${baseUrl}${cleanPath}`;
   };
