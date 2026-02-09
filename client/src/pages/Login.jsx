@@ -7,6 +7,7 @@ export default function Login() {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const nav = useNavigate();
 
   useEffect(() => {
@@ -56,17 +57,27 @@ export default function Login() {
             />
           </div>
 
-          <div className="input-group">
+         <div className="input-group">
             <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              placeholder="Enter your password"
-              value={p}
-              onChange={(e) => setP(e.target.value)}
-              onKeyPress={handleKeyPress}
-              className="auth-input"
-            />
+            <div className="password-wrapper">
+              <input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                placeholder="Enter your password"
+                value={p}
+                onChange={(e) => setP(e.target.value)}
+                onKeyPress={handleKeyPress}
+                className="auth-input"
+                autoComplete="current-password"
+              />
+              <span
+                className="toggle-pass"
+                onClick={() => setShowPassword(!showPassword)}
+                title={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? "🙈" : "👁"}
+              </span>
+            </div>
           </div>
 
           <button

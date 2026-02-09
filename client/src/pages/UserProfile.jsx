@@ -87,7 +87,7 @@ const startVideoCall = () => {
       return profilePic;
     }
     
-    const baseUrl = 'https://video-call-961n.onrender.com';
+    const baseUrl = 'http://localhost:5000/';
     const cleanPath = profilePic.startsWith('/') ? profilePic : `/${profilePic}`;
     return `${baseUrl}${cleanPath}`;
   };

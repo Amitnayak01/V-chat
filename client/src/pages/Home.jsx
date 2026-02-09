@@ -17,38 +17,35 @@ export default function Home() {
   useEffect(() => {
     let mounted = true;
 
-    const load = async () => {
-      try {
-        const res = await api.get("/auth/me", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+   const load = async () => {
+  try {
+    const res = await api.get("/auth/me", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
 
-        if (!mounted) return;
+    if (!mounted) return;
 
-        setCurrentUser(res.data);
-        
-        // Store userId in localStorage for CallContext
-        localStorage.setItem("userId", res.data._id);
+    // 🔴 SAFETY CHECK
+    if (!res.data || !res.data._id) {
+      console.log("⚠️ User not found in DB");
+      return;
+    }
 
-        // 🔥 TELL SERVER THIS USER IS ONLINE
-        socket.emit("user-online", res.data._id);
+    setCurrentUser(res.data);
 
-        // 👀 LISTEN FOR ONLINE USERS LIST
-        socket.on("online-users", (users) => {
-          if (mounted) {
-            setOnlineUsers(users);
-            console.log("📊 Online users received:", users);
-          }
-        });
+    localStorage.setItem("userId", res.data._id);
+    socket.emit("user-online", res.data._id);
 
-        await fetchUsers();
-      } catch (err) {
-        console.error("Failed to load user data:", err);
-        if (err.response?.status === 401) {
-          handleLogout();
-        }
-      }
-    };
+    socket.on("online-users", (users) => {
+      if (mounted) setOnlineUsers(users);
+    });
+
+    await fetchUsers();
+  } catch (err) {
+    console.error("Failed to load user data:", err);
+  }
+};
+
 
     load();
 
@@ -69,21 +66,12 @@ export default function Home() {
       setUsers(res.data);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load users");
-      if (err.response?.status === 401) {
-        handleLogout();
-      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    socket.emit("user-offline", currentUser?._id);
-    localStorage.removeItem("token");
-    localStorage.removeItem("userId");
-    nav("/login");
-  };
-
+  
   const refreshUsers = () => {
     fetchUsers();
   };
