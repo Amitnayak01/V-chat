@@ -1,174 +1,202 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { socket } from "./socket";
-import { Phone } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { useCall } from "../CallContext";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, UserPlus } from "lucide-react";
 
-const CallContext = createContext();
-
-export const useCall = () => useContext(CallContext);
-
-export const CallProvider = ({ children }) => {
+export default function VideoCall() {
+  const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [incomingCall, setIncomingCall] = useState(null);
+  const { socket, incomingCall, setIncomingCall } = useCall();
+
+  const targetUserId = params.get("userId");
+  const targetUsername = params.get("username");
+  const isIncoming = params.get("incoming") === "true";
   const currentUserId = localStorage.getItem("userId");
 
-  /* 🔥 REGISTER USER ONLINE ASAP */
+  const localVideo = useRef();
+  const remoteVideo = useRef();
+  const peerConnection = useRef();
+  const localStream = useRef();
+
+  const [callState, setCallState] = useState("idle");
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+
+  /* 🔥 ADD TO CALL STATES */
+  const [showAddPopup, setShowAddPopup] = useState(false);
+  const [users, setUsers] = useState([]);
+
+  const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+  /* ================= GET USERS ================= */
   useEffect(() => {
-    if (!currentUserId) return;
+    socket.emit("get-online-users");
+    socket.on("online-users", (list) => {
+      setUsers(list);
+    });
+    return () => socket.off("online-users");
+  }, [socket]);
 
-    if (socket.connected) {
-      socket.emit("user-online", currentUserId);
-    }
+  /* ================= MEDIA ================= */
+  const setupMedia = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localStream.current = stream;
+    localVideo.current.srcObject = stream;
+    return stream;
+  };
 
-    socket.on("connect", () => {
-      console.log("🟢 Socket connected:", socket.id);
-      socket.emit("user-online", currentUserId);
+  /* ================= PEER ================= */
+  const createPeer = (stream, toUserId) => {
+    const pc = new RTCPeerConnection(ICE);
+
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+
+    pc.ontrack = e => {
+      remoteVideo.current.srcObject = e.streams[0];
+    };
+
+    pc.onicecandidate = e => {
+      if (e.candidate) {
+        socket.emit("ice-candidate", { toUserId, candidate: e.candidate });
+      }
+    };
+
+    peerConnection.current = pc;
+    return pc;
+  };
+
+  /* ================= START CALL ================= */
+  const startCall = async () => {
+    setCallState("calling");
+    const stream = await setupMedia();
+    createPeer(stream, targetUserId);
+
+    const offer = await peerConnection.current.createOffer();
+    await peerConnection.current.setLocalDescription(offer);
+
+    socket.emit("call-user", {
+      toUserId: targetUserId,
+      fromUserId: currentUserId,
+      fromUsername: localStorage.getItem("username"),
+      offer
+    });
+  };
+
+  /* ================= ACCEPT CALL ================= */
+  const acceptCall = async () => {
+    if (!incomingCall) return;
+
+    setCallState("connecting");
+    const stream = await setupMedia();
+    createPeer(stream, incomingCall.fromUserId);
+
+    await peerConnection.current.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+
+    const answer = await peerConnection.current.createAnswer();
+    await peerConnection.current.setLocalDescription(answer);
+
+    socket.emit("accept-call", {
+      toUserId: incomingCall.fromUserId,
+      fromUserId: currentUserId,
+      answer
+    });
+
+    setIncomingCall(null);
+    setCallState("connected");
+  };
+
+  /* ================= SOCKET EVENTS ================= */
+  useEffect(() => {
+    socket.on("call-accepted", async ({ answer }) => {
+      await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
+      setCallState("connected");
+    });
+
+    socket.on("ice-candidate", async ({ candidate }) => {
+      if (peerConnection.current) {
+        await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    });
+
+    socket.on("call-ended", () => {
+      cleanup();
     });
 
     return () => {
-      socket.off("connect");
+      socket.off("call-accepted");
+      socket.off("ice-candidate");
+      socket.off("call-ended");
     };
-  }, [currentUserId]);
+  }, [socket]);
 
-  /* 🚨 ATTACH CALL LISTENER ONCE */
+  /* ================= INIT ================= */
   useEffect(() => {
-    const handleIncomingCall = ({ fromUserId, fromUsername, offer }) => {
-      console.log("📞 CALL RECEIVED:", fromUsername);
-      setIncomingCall({ fromUserId, fromUsername, offer });
-    };
-
-    const handleCallEnded = () => {
-      console.log("📴 Call ended → clearing incomingCall state");
-      setIncomingCall(null);
-    };
-
-    socket.on("incoming-call", handleIncomingCall);
-    socket.on("call-ended", handleCallEnded);
-
-    return () => {
-      socket.off("incoming-call", handleIncomingCall);
-      socket.off("call-ended", handleCallEnded);
-    };
+    if (isIncoming && incomingCall) acceptCall();
+    else if (targetUserId && !isIncoming) startCall();
   }, []);
 
-  const acceptCall = () => {
-    if (!incomingCall) return;
-    
-    console.log("✅ Accepting call from:", incomingCall.fromUsername);
-    
-    // Navigate to call page with incoming call data
-    navigate(`/call?userId=${incomingCall.fromUserId}&username=${incomingCall.fromUsername}&incoming=true`);
-    
-    // Don't clear incomingCall immediately - let VideoCall component access it
-    // It will be cleared by VideoCall after processing
+  /* ================= CLEANUP ================= */
+  const cleanup = () => {
+    peerConnection.current?.close();
+    localStream.current?.getTracks().forEach(t => t.stop());
+    navigate(-1);
   };
 
-  const declineCall = () => {
-    if (!incomingCall) return;
-    
-    console.log("❌ Declining call from:", incomingCall.fromUsername);
-    
-    socket.emit("decline-call", { 
-      toUserId: incomingCall.fromUserId,
-      fromUserId: currentUserId 
+  /* ================= CONTROLS ================= */
+  const toggleMute = () => {
+    const track = localStream.current.getAudioTracks()[0];
+    track.enabled = !track.enabled;
+    setIsMuted(!track.enabled);
+  };
+
+  const toggleVideo = () => {
+    const track = localStream.current.getVideoTracks()[0];
+    track.enabled = !track.enabled;
+    setIsVideoOff(!track.enabled);
+  };
+
+  const endCall = () => {
+    socket.emit("end-call");
+    cleanup();
+  };
+
+  /* ================= ADD PARTICIPANT ================= */
+  const inviteUser = (userId) => {
+    socket.emit("invite-to-call", {
+      toUserId: userId,
+      roomId: window.currentRoomId,
+      fromUserId: currentUserId,
+      fromUsername: localStorage.getItem("username")
     });
-    
-    setIncomingCall(null);
+    setShowAddPopup(false);
   };
 
+  /* ================= UI ================= */
   return (
-    <CallContext.Provider value={{ socket, incomingCall, setIncomingCall }}>
-      {children}
+    <div className="call-container">
+      <video ref={remoteVideo} autoPlay playsInline className="remote" />
+      <video ref={localVideo} autoPlay muted playsInline className="local" />
 
-      {incomingCall && (
-        <div style={overlayStyle}>
-          <div style={modalStyle}>
-            <div style={iconContainerStyle}>
-              <Phone size={50} color="#22c55e" />
+      <div className="controls">
+        <button onClick={toggleMute}>{isMuted ? <MicOff /> : <Mic />}</button>
+        <button onClick={toggleVideo}>{isVideoOff ? <VideoOff /> : <Video />}</button>
+        <button onClick={() => setShowAddPopup(true)}><UserPlus /></button>
+        <button onClick={endCall}><PhoneOff /></button>
+      </div>
+
+      {/* ADD USER POPUP */}
+      {showAddPopup && (
+        <div className="popup">
+          <h3>Add Participant</h3>
+          {users.filter(u => u !== currentUserId).map(user => (
+            <div key={user} className="user-item">
+              <span>{user}</span>
+              <button onClick={() => inviteUser(user)}>Add</button>
             </div>
-            <h2 style={titleStyle}>Incoming Call</h2>
-            <p style={textStyle}>{incomingCall.fromUsername} is calling...</p>
-            <div style={buttonContainerStyle}>
-              <button onClick={acceptCall} style={acceptButtonStyle}>
-                Accept
-              </button>
-              <button onClick={declineCall} style={declineButtonStyle}>
-                Decline
-              </button>
-            </div>
-          </div>
+          ))}
+          <button onClick={() => setShowAddPopup(false)}>Close</button>
         </div>
       )}
-    </CallContext.Provider>
+    </div>
   );
-};
-
-const overlayStyle = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(0,0,0,0.9)",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 9999,
-  backdropFilter: "blur(10px)",
-};
-
-const modalStyle = {
-  background: "linear-gradient(135deg, #1a1f3a 0%, #0a0e27 100%)",
-  padding: "40px",
-  borderRadius: "20px",
-  color: "white",
-  textAlign: "center",
-  minWidth: "320px",
-  border: "1px solid rgba(255, 255, 255, 0.1)",
-  boxShadow: "0 20px 60px rgba(0, 0, 0, 0.5)",
-};
-
-const iconContainerStyle = {
-  marginBottom: "20px",
-  animation: "pulse 2s infinite",
-};
-
-const titleStyle = {
-  fontSize: "24px",
-  fontWeight: "600",
-  marginBottom: "10px",
-  color: "#fff",
-};
-
-const textStyle = {
-  fontSize: "16px",
-  color: "rgba(255, 255, 255, 0.7)",
-  marginBottom: "30px",
-};
-
-const buttonContainerStyle = {
-  display: "flex",
-  gap: "12px",
-  justifyContent: "center",
-};
-
-const acceptButtonStyle = {
-  background: "#22c55e",
-  color: "white",
-  border: "none",
-  borderRadius: "50px",
-  padding: "12px 32px",
-  fontSize: "16px",
-  fontWeight: "600",
-  cursor: "pointer",
-  transition: "all 0.3s ease",
-};
-
-const declineButtonStyle = {
-  background: "#ef4444",
-  color: "white",
-  border: "none",
-  borderRadius: "50px",
-  padding: "12px 32px",
-  fontSize: "16px",
-  fontWeight: "600",
-  cursor: "pointer",
-  transition: "all 0.3s ease",
-};
+}
