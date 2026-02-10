@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useCall } from "../CallContext";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Phone, Monitor, Grid, Volume2, VolumeX, Maximize, Minimize, User, Wifi, WifiOff, UserPlus, X } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Phone, Monitor, Grid, Volume2, VolumeX, Maximize, Minimize, User, Wifi, WifiOff } from "lucide-react";
 import { RefreshCcw } from "lucide-react";
-import api from "../api";
 
 
 const ICE_CONFIG = {
@@ -45,119 +44,70 @@ export default function VideoCall() {
   const [showPlayButton, setShowPlayButton] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
-  const [cameraFacing, setCameraFacing] = useState("user");
+  const [cameraFacing, setCameraFacing] = useState("user"); // "user" = front, "environment" = back
   const [isLocalFullscreen, setIsLocalFullscreen] = useState(false);
-  
-  // Add to Call states
-  const [showAddToCall, setShowAddToCall] = useState(false);
-  const [availableUsers, setAvailableUsers] = useState([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [onlineUsers, setOnlineUsers] = useState([]);
  
   const pipRef = useRef(null);
-  const [pipPosition, setPipPosition] = useState({ x: 0, y: 0 });
-  const dragData = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
+const [pipPosition, setPipPosition] = useState({ x: 0, y: 0 });
+const dragData = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
 
-  const startDrag = (e) => {
-    if (layoutMode !== "focus" || isLocalFullscreen) return;
+const startDrag = (e) => {
+  if (layoutMode !== "focus" || isLocalFullscreen) return;
 
-    const rect = pipRef.current.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const rect = pipRef.current.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    dragData.current = {
-      dragging: true,
-      offsetX: clientX - rect.left,
-      offsetY: clientY - rect.top
-    };
+  dragData.current = {
+    dragging: true,
+    offsetX: clientX - rect.left,
+    offsetY: clientY - rect.top
   };
+};
 
-  const onDrag = (e) => {
-    if (!dragData.current.dragging) return;
+const onDrag = (e) => {
+  if (!dragData.current.dragging) return;
 
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    const x = clientX - dragData.current.offsetX;
-    const y = clientY - dragData.current.offsetY;
+  const x = clientX - dragData.current.offsetX;
+  const y = clientY - dragData.current.offsetY;
 
-    setPipPosition({ x, y });
+  setPipPosition({ x, y });
+};
+
+const endDrag = () => {
+  if (!dragData.current.dragging) return;
+  dragData.current.dragging = false;
+
+  const screenW = window.innerWidth;
+  const screenH = window.innerHeight;
+  const rect = pipRef.current.getBoundingClientRect();
+
+  // Snap logic
+  const snapX = rect.left < screenW / 2 ? 16 : screenW - rect.width - 16;
+  const snapY = rect.top < screenH / 2 ? 16 : screenH - rect.height - 120;
+
+  setPipPosition({ x: snapX, y: snapY });
+};
+
+
+useEffect(() => {
+  window.addEventListener("mousemove", onDrag);
+  window.addEventListener("mouseup", endDrag);
+  window.addEventListener("touchmove", onDrag);
+  window.addEventListener("touchend", endDrag);
+  return () => {
+    window.removeEventListener("mousemove", onDrag);
+    window.removeEventListener("mouseup", endDrag);
+    window.removeEventListener("touchmove", onDrag);
+    window.removeEventListener("touchend", endDrag);
   };
+}, []);
 
-  const endDrag = () => {
-    if (!dragData.current.dragging) return;
-    dragData.current.dragging = false;
 
-    const screenW = window.innerWidth;
-    const screenH = window.innerHeight;
-    const rect = pipRef.current.getBoundingClientRect();
 
-    const snapX = rect.left < screenW / 2 ? 16 : screenW - rect.width - 16;
-    const snapY = rect.top < screenH / 2 ? 16 : screenH - rect.height - 120;
-
-    setPipPosition({ x: snapX, y: snapY });
-  };
-
-  useEffect(() => {
-    window.addEventListener("mousemove", onDrag);
-    window.addEventListener("mouseup", endDrag);
-    window.addEventListener("touchmove", onDrag);
-    window.addEventListener("touchend", endDrag);
-    return () => {
-      window.removeEventListener("mousemove", onDrag);
-      window.removeEventListener("mouseup", endDrag);
-      window.removeEventListener("touchmove", onDrag);
-      window.removeEventListener("touchend", endDrag);
-    };
-  }, []);
-
-  // Listen for online users updates
-  useEffect(() => {
-    const handleOnlineUsers = (users) => {
-      setOnlineUsers(users);
-    };
-
-    socket.on("online-users", handleOnlineUsers);
-    
-    return () => {
-      socket.off("online-users", handleOnlineUsers);
-    };
-  }, [socket]);
-
-  // Fetch available users for add to call
-  const fetchAvailableUsers = async () => {
-    setLoadingUsers(true);
-    try {
-      const token = localStorage.getItem("token");
-      const res = await api.get("/auth/users", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      // Filter out current user and user already in call
-      const filtered = res.data.filter(user => 
-        user._id !== currentUserId && 
-        user._id !== targetUserId &&
-        onlineUsers.includes(user._id)
-      );
-      
-      setAvailableUsers(filtered);
-    } catch (err) {
-      console.error("Failed to fetch users:", err);
-      alert("Failed to load users");
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
-
-  const handleAddToCallClick = () => {
-    setShowAddToCall(true);
-    fetchAvailableUsers();
-  };
-
-  const handleInviteUser = (user) => {
-    navigate(`/call?userId=${user._id}&username=${user.username}`);
-    setShowAddToCall(false);
-  };
 
   // Detect mobile
   useEffect(() => {
@@ -196,37 +146,39 @@ export default function VideoCall() {
   }, [navigate]);
 
   const switchCamera = async () => {
-    try {
-      if (!localStream.current) return;
+  try {
+    if (!localStream.current) return;
 
-      const currentVideoTrack = localStream.current.getVideoTracks()[0];
-      if (currentVideoTrack) currentVideoTrack.stop();
+    const currentVideoTrack = localStream.current.getVideoTracks()[0];
+    if (currentVideoTrack) currentVideoTrack.stop();
 
-      const newFacing = cameraFacing === "user" ? "environment" : "user";
+    const newFacing = cameraFacing === "user" ? "environment" : "user";
 
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { exact: newFacing } },
-        audio: false
-      });
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { exact: newFacing } },
+      audio: false
+    });
 
-      const newVideoTrack = newStream.getVideoTracks()[0];
+    const newVideoTrack = newStream.getVideoTracks()[0];
 
-      const sender = peerConnection.current
-        ?.getSenders()
-        .find(s => s.track?.kind === "video");
+    // Replace track in peer connection
+    const sender = peerConnection.current
+      ?.getSenders()
+      .find(s => s.track?.kind === "video");
 
-      if (sender) await sender.replaceTrack(newVideoTrack);
+    if (sender) await sender.replaceTrack(newVideoTrack);
 
-      localStream.current.removeTrack(currentVideoTrack);
-      localStream.current.addTrack(newVideoTrack);
+    // Update local stream
+    localStream.current.removeTrack(currentVideoTrack);
+    localStream.current.addTrack(newVideoTrack);
 
-      localVideo.current.srcObject = localStream.current;
+    localVideo.current.srcObject = localStream.current;
 
-      setCameraFacing(newFacing);
-    } catch (err) {
-      console.error("Camera switch error:", err);
-    }
-  };
+    setCameraFacing(newFacing);
+  } catch (err) {
+    console.error("Camera switch error:", err);
+  }
+};
 
   // Socket Events
   useEffect(() => {
@@ -438,16 +390,6 @@ export default function VideoCall() {
                  : `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
-  const getImageUrl = (profilePic) => {
-    if (!profilePic) return null;
-    if (profilePic.startsWith('http://') || profilePic.startsWith('https://')) {
-      return profilePic;
-    }
-    const baseUrl = 'https://v-chat-itn7.onrender.com';
-    const cleanPath = profilePic.startsWith('/') ? profilePic : `/${profilePic}`;
-    return `${baseUrl}${cleanPath}`;
-  };
-
   return (
     <div className="video-call-container">
       <style>{`
@@ -549,31 +491,15 @@ export default function VideoCall() {
 
         .video-layout.grid-mode {
           display: grid;
+          grid-template-columns: 1fr 1fr;
           gap: 8px;
           padding: 8px;
-        }
-
-        @media (min-width: 769px) {
-          .video-layout.grid-mode {
-            grid-template-columns: 1fr 1fr;
-            grid-template-rows: 1fr;
-          }
         }
 
         @media (max-width: 768px) {
           .video-layout.grid-mode {
             grid-template-columns: 1fr;
             grid-template-rows: 1fr 1fr;
-          }
-
-          .video-layout.grid-mode .remote-video-container,
-          .video-layout.grid-mode .local-video-container {
-            position: relative !important;
-            width: 100% !important;
-            height: 100% !important;
-            border-radius: 0 !important;
-            bottom: auto !important;
-            right: auto !important;
           }
         }
 
@@ -931,184 +857,6 @@ export default function VideoCall() {
           color: white;
         }
 
-        /* Add to Call Popup */
-        .add-to-call-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.8);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 200;
-          backdrop-filter: blur(5px);
-          animation: fadeIn 0.3s ease;
-        }
-
-        .add-to-call-popup {
-          background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-          border-radius: 20px;
-          padding: 30px;
-          max-width: 500px;
-          width: 90%;
-          max-height: 80vh;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-          animation: slideUp 0.3s ease;
-        }
-
-        .popup-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 20px;
-        }
-
-        .popup-header h3 {
-          font-size: 22px;
-          font-weight: 700;
-          color: white;
-        }
-
-        .close-popup-btn {
-          background: rgba(255, 255, 255, 0.1);
-          border: none;
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .close-popup-btn:hover {
-          background: rgba(255, 255, 255, 0.2);
-          transform: rotate(90deg);
-        }
-
-        .users-list {
-          flex: 1;
-          overflow-y: auto;
-          margin-top: 10px;
-        }
-
-        .user-item {
-          display: flex;
-          align-items: center;
-          gap: 15px;
-          padding: 15px;
-          background: rgba(255, 255, 255, 0.05);
-          border-radius: 12px;
-          margin-bottom: 10px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          border: 1px solid transparent;
-        }
-
-        .user-item:hover {
-          background: rgba(255, 255, 255, 0.1);
-          border-color: rgba(59, 130, 246, 0.5);
-          transform: translateX(5px);
-        }
-
-        .user-avatar {
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          object-fit: cover;
-          border: 2px solid rgba(59, 130, 246, 0.5);
-        }
-
-        .user-avatar-placeholder {
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 24px;
-          font-weight: bold;
-          color: white;
-          border: 2px solid rgba(59, 130, 246, 0.5);
-          text-transform: uppercase;
-        }
-
-        .user-info {
-          flex: 1;
-        }
-
-        .user-info h4 {
-          font-size: 16px;
-          font-weight: 600;
-          color: white;
-          margin-bottom: 4px;
-        }
-
-        .user-info p {
-          font-size: 13px;
-          color: rgba(255, 255, 255, 0.6);
-        }
-
-        .online-indicator {
-          width: 10px;
-          height: 10px;
-          border-radius: 50%;
-          background: #22c55e;
-          box-shadow: 0 0 10px rgba(34, 197, 94, 0.6);
-        }
-
-        .no-users-message {
-          text-align: center;
-          padding: 40px 20px;
-          color: rgba(255, 255, 255, 0.5);
-        }
-
-        .loading-spinner {
-          text-align: center;
-          padding: 40px;
-        }
-
-        .spinner {
-          width: 40px;
-          height: 40px;
-          border: 4px solid rgba(255, 255, 255, 0.1);
-          border-top-color: #3b82f6;
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-          margin: 0 auto;
-        }
-
-        /* Swap videos when local is fullscreen */
-        .video-layout.local-full .local-video-container {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100% !important;
-          height: 100% !important;
-          border-radius: 0;
-          z-index: 10;
-        }
-
-        .video-layout.local-full .remote-video-container {
-          position: absolute;
-          bottom: clamp(80px, 15vh, 140px);
-          right: clamp(12px, 3vw, 30px);
-          width: clamp(120px, 25vw, 280px);
-          height: clamp(90px, 18vw, 200px);
-          border-radius: clamp(12px, 2vw, 20px);
-          overflow: hidden;
-          border: 3px solid rgba(255,255,255,0.2);
-          z-index: 50;
-        }
-
         /* Animations */
         @keyframes pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
@@ -1116,47 +864,12 @@ export default function VideoCall() {
         }
 
         @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        @keyframes slideUp {
-          from { 
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          to { 
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         .fade-in {
           animation: fadeIn 0.4s ease;
-        }
-
-        /* Hide scrollbar */
-        ::-webkit-scrollbar { 
-          width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.05);
-          border-radius: 10px;
-        }
-
-        ::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.2);
-          border-radius: 10px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-          background: rgba(255, 255, 255, 0.3);
         }
 
         /* Responsive adjustments */
@@ -1168,14 +881,6 @@ export default function VideoCall() {
           .controls {
             max-width: 95vw;
           }
-
-          .add-to-call-popup {
-            padding: 20px;
-          }
-
-          .popup-header h3 {
-            font-size: 18px;
-          }
         }
 
         @media (max-width: 380px) {
@@ -1183,6 +888,70 @@ export default function VideoCall() {
             max-width: 98vw;
           }
         }
+
+
+
+        .video-layout.grid-mode {
+  display: grid;
+  width: 100%;
+  height: 100%;
+}
+
+/* Desktop → side by side */
+@media (min-width: 769px) {
+  .video-layout.grid-mode {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+}
+
+/* Mobile → top bottom split */
+@media (max-width: 768px) {
+  .video-layout.grid-mode {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  .video-layout.grid-mode .remote-video-container,
+  .video-layout.grid-mode .local-video-container {
+    position: relative !important;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 0 !important;
+    bottom: auto !important;
+    right: auto !important;
+  }
+}
+
+
+
+
+        /* Swap videos when local is fullscreen */
+.video-layout.local-full .local-video-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+  z-index: 10;
+}
+
+.video-layout.local-full .remote-video-container {
+  position: absolute;
+  bottom: clamp(80px, 15vh, 140px);
+  right: clamp(12px, 3vw, 30px);
+  width: clamp(120px, 25vw, 280px);
+  height: clamp(90px, 18vw, 200px);
+  border-radius: clamp(12px, 2vw, 20px);
+  overflow: hidden;
+  border: 3px solid rgba(255,255,255,0.2);
+  z-index: 50;
+}
+
+
+        /* Hide scrollbar */
+        ::-webkit-scrollbar { display: none; }
       `}</style>
 
       {/* Header */}
@@ -1206,29 +975,21 @@ export default function VideoCall() {
             )}
           </div>
           <div className="header-actions">
-            <button 
-              onClick={handleAddToCallClick}
-              className="control-btn" 
-              title="Add to Call"
-            >
-              <UserPlus size={isMobile ? 18 : 20} color="#fff" />
-            </button>
-
-            <button 
-              onClick={() => setLayoutMode(m => m === "focus" ? "grid" : "focus")} 
-              className="control-btn" 
-              title="Split Screen"
-            >
-              <Grid size={isMobile ? 18 : 20} color="#fff" />
-            </button>
+          <button 
+  onClick={() => setLayoutMode(m => m === "focus" ? "grid" : "focus")} 
+  className="control-btn" 
+  title="Split Screen"
+>
+  <Grid size={isMobile ? 18 : 20} color="#fff" />
+</button>
 
             <button
-              onClick={switchCamera}
-              className="control-btn"
-              title="Flip Camera"
-            >
-              <RefreshCcw size={isMobile ? 20 : 22} color="#fff" />
-            </button>
+  onClick={switchCamera}
+  className="control-btn"
+  title="Flip Camera"
+>
+  <RefreshCcw size={isMobile ? 20 : 22} color="#fff" />
+</button>
 
             <button onClick={toggleFullscreen} className="control-btn" title="Fullscreen">
               {isFullscreen ? <Minimize size={20} color="#fff" /> : <Maximize size={20} color="#fff" />}
@@ -1241,9 +1002,9 @@ export default function VideoCall() {
       <div className={`video-layout ${layoutMode === "grid" ? "grid-mode" : ""} ${isLocalFullscreen ? "local-full" : ""}`}>
         {/* Remote Video */}
         <div 
-          className="remote-video-container"
-          onClick={() => setIsLocalFullscreen(f => !f)}
-        >
+  className="remote-video-container"
+  onClick={() => setIsLocalFullscreen(f => !f)}
+>
           <video ref={remoteVideo} autoPlay playsInline className="remote-video" />
           
           {!hasRemoteStream && callState === "connected" && (
@@ -1266,21 +1027,23 @@ export default function VideoCall() {
         </div>
 
         {/* Local Video (PiP) */}
-        <div
-          ref={pipRef}
-          className="local-video-container fade-in"
-          onMouseDown={startDrag}
-          onTouchStart={startDrag}
-          style={
-            layoutMode === "focus" && !isLocalFullscreen
-              ? {
-                  position: "absolute",
-                  left: pipPosition.x || undefined,
-                  top: pipPosition.y || undefined
-                }
-              : {}
-          }
-        >
+  <div
+  ref={pipRef}
+  className="local-video-container fade-in"
+  onMouseDown={startDrag}
+  onTouchStart={startDrag}
+  style={
+    layoutMode === "focus" && !isLocalFullscreen
+      ? {
+          position: "absolute",
+          left: pipPosition.x || undefined,
+          top: pipPosition.y || undefined
+        }
+      : {}
+  }
+>
+
+
           <video ref={localVideo} autoPlay muted playsInline className="local-video" />
           {isVideoOff && (
             <div className="video-placeholder">
@@ -1357,75 +1120,6 @@ export default function VideoCall() {
             >
               <Monitor size={isMobile ? 20 : 22} color="#fff" />
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Add to Call Popup */}
-      {showAddToCall && (
-        <div className="add-to-call-overlay" onClick={(e) => {
-          if (e.target.className === "add-to-call-overlay") {
-            setShowAddToCall(false);
-          }
-        }}>
-          <div className="add-to-call-popup">
-            <div className="popup-header">
-              <h3>Add to Call</h3>
-              <button 
-                className="close-popup-btn" 
-                onClick={() => setShowAddToCall(false)}
-              >
-                <X size={20} color="#fff" />
-              </button>
-            </div>
-
-            <div className="users-list">
-              {loadingUsers ? (
-                <div className="loading-spinner">
-                  <div className="spinner"></div>
-                  <p style={{ marginTop: "15px", color: "rgba(255,255,255,0.7)" }}>
-                    Loading users...
-                  </p>
-                </div>
-              ) : availableUsers.length === 0 ? (
-                <div className="no-users-message">
-                  <p style={{ fontSize: "48px", marginBottom: "10px" }}>👥</p>
-                  <p style={{ fontSize: "16px", marginBottom: "5px" }}>No available users</p>
-                  <p style={{ fontSize: "13px" }}>All users are offline or already in call</p>
-                </div>
-              ) : (
-                availableUsers.map((user) => (
-                  <div 
-                    key={user._id} 
-                    className="user-item"
-                    onClick={() => handleInviteUser(user)}
-                  >
-                    {getImageUrl(user.profilePic) ? (
-                      <img
-                        src={getImageUrl(user.profilePic)}
-                        alt={user.username}
-                        className="user-avatar"
-                        onError={(e) => {
-                          e.target.style.display = "none";
-                          e.target.nextElementSibling.style.display = "flex";
-                        }}
-                      />
-                    ) : null}
-                    <div 
-                      className="user-avatar-placeholder"
-                      style={{ display: getImageUrl(user.profilePic) ? "none" : "flex" }}
-                    >
-                      {user.username.charAt(0)}
-                    </div>
-                    <div className="user-info">
-                      <h4>{user.username}</h4>
-                      <p>Click to call</p>
-                    </div>
-                    <div className="online-indicator"></div>
-                  </div>
-                ))
-              )}
-            </div>
           </div>
         </div>
       )}
