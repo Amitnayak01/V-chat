@@ -46,10 +46,7 @@ export default function VideoCall() {
   const [isMobile, setIsMobile] = useState(false);
   const [cameraFacing, setCameraFacing] = useState("user"); // "user" = front, "environment" = back
   const [isLocalFullscreen, setIsLocalFullscreen] = useState(false);
-  const [showAddPopup, setShowAddPopup] = useState(false);
-  const [users, setUsers] = useState([]);
-
-
+ 
   const pipRef = useRef(null);
 const [pipPosition, setPipPosition] = useState({ x: 0, y: 0 });
 const dragData = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
@@ -227,31 +224,6 @@ useEffect(() => {
     }, 100);
     return () => clearTimeout(timer);
   }, [hasRemoteStream]);
-
-
-  useEffect(() => {
-  socket.emit("get-users");
-
-  socket.on("users-list", (list) => {
-    setUsers(list);
-  });
-
-  return () => socket.off("users-list");
-}, [socket]);
-
-
-
-const inviteUserToCall = (userId) => {
-  socket.emit("invite-to-call", {
-    toUserId: userId,
-    roomId: currentUserId, // or your call room id
-    fromUserId: currentUserId,
-    fromUsername: localStorage.getItem("username")
-  });
-
-  setShowAddPopup(false);
-};
-
 
   // Setup Media
   const setupMedia = async () => {
@@ -1022,15 +994,6 @@ const inviteUserToCall = (userId) => {
             <button onClick={toggleFullscreen} className="control-btn" title="Fullscreen">
               {isFullscreen ? <Minimize size={20} color="#fff" /> : <Maximize size={20} color="#fff" />}
             </button>
-<button
-  onClick={() => setShowAddPopup(true)}
-  className="control-btn"
-  title="Add participant"
->
-  <User size={isMobile ? 20 : 22} color="#fff" />
-</button>
-
-            
           </div>
         </div>
       </div>
@@ -1160,48 +1123,6 @@ const inviteUserToCall = (userId) => {
           </div>
         </div>
       )}
-
-{showAddPopup && (
-  <div className="popup-overlay">
-    <div className="add-user-popup">
-      <h3>Add Participant</h3>
-
-      <div className="user-list">
-        {users
-          .filter(u => u._id !== currentUserId)
-          .map(user => (
-            <div key={user._id} className="user-item">
-              <img
-                src={user.avatar || "/default-avatar.png"}
-                className="avatar"
-              />
-              <div className="user-info">
-                <span>{user.username}</span>
-                <span className={user.online ? "status online" : "status offline"}>
-                  {user.online ? "Online" : "Offline"}
-                </span>
-              </div>
-
-              {user.online && (
-                <button
-                  className="add-btn"
-                  onClick={() => inviteUserToCall(user._id)}
-                >
-                  Add
-                </button>
-              )}
-            </div>
-          ))}
-      </div>
-
-      <button className="close-btn" onClick={() => setShowAddPopup(false)}>
-        Close
-      </button>
-    </div>
-  </div>
-)}
-
-
     </div>
   );
 }
