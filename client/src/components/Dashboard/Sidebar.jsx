@@ -1,8 +1,11 @@
 // Sidebar.jsx — paste into src/components/Dashboard/Sidebar.jsx
+// ✅ CHANGE: Added 'call-history' nav item (Phone icon, teal colour)
+//    Everything else is 100% unchanged from your original.
+
 import { useAuth } from '../../context/AuthContext';
 import {
   Home, Users, Settings, History, MessageCircle, UserCircle,
-  ChevronDown, ChevronRight, LogOut
+  ChevronDown, ChevronRight, LogOut, Phone,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -10,6 +13,9 @@ const NAV = [
   { id: 'meetings',        label: 'Home',            icon: Home,          color: 'text-blue-500'    },
   { id: 'chats',           label: 'Chats',           icon: MessageCircle, color: 'text-violet-500'  },
   { id: 'meeting-history', label: 'Meeting History', icon: History,       color: 'text-amber-500'   },
+  // ── NEW ─────────────────────────────────────────────────────────────────
+  { id: 'call-history',    label: 'Call History',    icon: Phone,         color: 'text-teal-500'    },
+  // ────────────────────────────────────────────────────────────────────────
   { id: 'contacts',        label: 'Contacts',        icon: Users,         color: 'text-emerald-500' },
   { id: 'profile',         label: 'Profile',         icon: UserCircle,    color: 'text-pink-500'    },
   { id: 'settings',        label: 'Settings',        icon: Settings,      color: 'text-slate-500'   },

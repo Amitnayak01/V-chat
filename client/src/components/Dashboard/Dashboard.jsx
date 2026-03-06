@@ -5,6 +5,7 @@ import {
   Share2, Clock, Zap, Calendar, ArrowRight,
   CheckCheck, Sparkles,
   Home, MessageCircle, History, Settings as SettingsIcon,
+  Phone,
 } from 'lucide-react';
 
 import Navbar         from '../Common/Navbar';
@@ -13,6 +14,7 @@ import UserList       from './UserList';
 import ContactsList   from './ContactsList';
 import IncomingCall   from './IncomingCall';
 import MeetingHistory from './MeetingHistory';
+import CallHistory    from './CallHistory';
 import Chat           from './Chat';
 import Profile        from './Profile';
 import Settings       from './Settings';
@@ -30,6 +32,7 @@ const VIEW_TO_PATH = {
   meetings:          '/dashboard',
   chats:             '/dashboard/chats',
   'meeting-history': '/dashboard/meeting-history',
+  'call-history':    '/dashboard/call-history',
   contacts:          '/dashboard/contacts',
   profile:           '/dashboard/profile',
   settings:          '/dashboard/settings',
@@ -51,11 +54,11 @@ const pathToView = (pathname) => {
    Mobile Bottom Navigation Bar
 ───────────────────────────────────────────── */
 const BOTTOM_NAV_ITEMS = [
-  { id: 'meetings',        label: 'Home',     icon: Home,          activeColor: 'text-blue-600',    activeBg: 'bg-blue-600',    shadow: 'shadow-blue-200/80'    },
-  { id: 'chats',           label: 'Chats',    icon: MessageCircle, activeColor: 'text-violet-600',  activeBg: 'bg-violet-600',  shadow: 'shadow-violet-200/80'  },
-  { id: 'meeting-history', label: 'History',  icon: History,       activeColor: 'text-amber-600',   activeBg: 'bg-amber-500',   shadow: 'shadow-amber-200/80'   },
-  { id: 'contacts',        label: 'Contacts', icon: Users,         activeColor: 'text-emerald-600', activeBg: 'bg-emerald-500', shadow: 'shadow-emerald-200/80' },
-  { id: 'settings',        label: 'Settings', icon: SettingsIcon,  activeColor: 'text-slate-600',   activeBg: 'bg-slate-600',   shadow: 'shadow-slate-200/80'   },
+  { id: 'meetings',     label: 'Home',     icon: Home,          activeColor: 'text-blue-600',    activeBg: 'bg-blue-600',    shadow: 'shadow-blue-200/80'    },
+  { id: 'chats',        label: 'Chats',    icon: MessageCircle, activeColor: 'text-violet-600',  activeBg: 'bg-violet-600',  shadow: 'shadow-violet-200/80'  },
+  { id: 'call-history', label: 'Calls',    icon: Phone,         activeColor: 'text-teal-600',    activeBg: 'bg-teal-500',    shadow: 'shadow-teal-200/80'    },
+  { id: 'contacts',     label: 'Contacts', icon: Users,         activeColor: 'text-emerald-600', activeBg: 'bg-emerald-500', shadow: 'shadow-emerald-200/80' },
+  { id: 'settings',     label: 'Settings', icon: SettingsIcon,  activeColor: 'text-slate-600',   activeBg: 'bg-slate-600',   shadow: 'shadow-slate-200/80'   },
 ];
 
 const MobileBottomNav = ({ activeView, onNavigate, unreadChats, user }) => (
@@ -556,6 +559,8 @@ const Dashboard = () => {
         );
       case 'meeting-history':
         return <MeetingHistory />;
+      case 'call-history':
+        return <CallHistory />;
       case 'contacts':
         return <ContactsView onCallUser={handleCallUser} />;
       case 'profile':
