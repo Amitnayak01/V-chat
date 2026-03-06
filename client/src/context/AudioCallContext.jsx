@@ -356,7 +356,7 @@ export const AudioCallProvider = ({ children }) => {
       try {
         setCallState('calling');
         callStateRef.current = 'calling';
-        setCallStatus('Calling…');
+        setCallStatus('Ringing…');
 
         const callData = {
           peerId:     receiverId,
@@ -546,21 +546,27 @@ export const AudioCallProvider = ({ children }) => {
       fullCleanup();
     },
 
-    // User was offline
+    // Receiver is offline — server queued the call, keep ringing
+    onAudioCallQueued: ({ callId }) => {
+      // Update callId in case it differs, then show offline-ring status.
+      // The ringtone is already playing (started in initiateCall).
+      // We stay in 'calling' state — UI shows "Ringing (offline)…"
+      callIdRef.current = callId;
+      setActiveCall((prev) => (prev ? { ...prev, callId } : null));
+      if (activeCallRef.current) activeCallRef.current.callId = callId;
+      setCallStatus('Ringing (offline)…');
+    },
+
+    // User was offline and never reconnected in time / caller cancelled
     onAudioCallFailed:   () => { stopRinging(); fullCleanup(); },
     onAudioCallTimeout:  () => { stopRinging(); fullCleanup(); },
     onAudioCallBusy:     () => { stopRinging(); fullCleanup(); },
 
     // WebRTC signaling (audio-specific events)
-onAudioWebRTCOffer: async ({ offer, from }) => {
-  if (!activeCallRef.current) return;
-  await handleAudioOffer(from, offer);
-  // Receiver transitions to connected after processing offer + sending answer
-  setCallState('connected');
-  callStateRef.current = 'connected';
-  setCallStatus('');
-  startTimer();
-},
+    onAudioWebRTCOffer: async ({ offer, from }) => {
+      if (!activeCallRef.current) return;
+      await handleAudioOffer(from, offer);
+    },
 
     onAudioWebRTCAnswer: async ({ answer, from }) => {
       if (!activeCallRef.current) return;
@@ -613,6 +619,7 @@ onAudioWebRTCOffer: async ({ offer, from }) => {
     const handlers = {
       'incoming-audio-call':  wrap('onIncomingAudioCall'),
       'audio-call-initiated': wrap('onAudioCallInitiated'),
+      'audio-call-queued':    wrap('onAudioCallQueued'),
       'audio-call-accepted':  wrap('onAudioCallAccepted'),
       'audio-call-rejected':  wrap('onAudioCallRejected'),
       'audio-call-ended':     wrap('onAudioCallEnded'),
@@ -630,10 +637,33 @@ onAudioWebRTCOffer: async ({ offer, from }) => {
 
     Object.entries(handlers).forEach(([ev, handler]) => socket.on(ev, handler));
 
+    // ── Offline-ring delivery on (re)connect ──────────────────────────────
+    // Every time the socket connects or reconnects, tell the server to push
+    // any pending incoming call that was queued while we were offline.
+    // This is the client side of the offline-ring feature — the server's
+    // deliverPendingAudioCalls() is triggered by the 'check-pending-audio-calls'
+    // event handled in audioCallSocket.js.
+    const deliverOnConnect = () => {
+      if (!user?._id) return;
+      // Small delay to ensure the user's personal socket room has been joined
+      // by the auth/connect handler in handlers.js before we ask for delivery.
+      setTimeout(() => {
+        socket.emit('check-pending-audio-calls', { userId: user._id });
+      }, 500);
+    };
+
+    socket.on('connect',   deliverOnConnect);
+    socket.on('reconnect', deliverOnConnect);
+
+    // If socket is already connected right now, run delivery immediately
+    if (socket.connected) deliverOnConnect();
+
     return () => {
       Object.entries(handlers).forEach(([ev, handler]) => socket.off(ev, handler));
+      socket.off('connect',   deliverOnConnect);
+      socket.off('reconnect', deliverOnConnect);
     };
-  }, [socket]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [socket, user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Cleanup on unmount ─────────────────────────────────────────────────────
   useEffect(() => () => fullCleanup(), []); // eslint-disable-line react-hooks/exhaustive-deps

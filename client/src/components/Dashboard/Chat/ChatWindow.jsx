@@ -944,16 +944,33 @@ const handleAudioCall = async () => {
 
   const handleMuteConversation = useCallback(async () => {
     const nm = !isMuted; setIsMuted(nm); onConversationUpdate?.(conversation.conversationId, { isMuted: nm }); setMoreMenuOpen(false);
-    try { await api.patch(`/direct-messages/conversations/${conversation.conversationId}/mute`, { muted: nm }); toast.success(nm ? 'Conversation muted' : 'Conversation unmuted'); }
+    try { await api.patch(
+  `/direct-messages/conversations/${conversation.conversationId}/mute`,
+  nm ? { duration: null } : { duration: 'unmute' }
+); toast.success(nm ? 'Conversation muted' : 'Conversation unmuted'); }
     catch (_) { setIsMuted(!nm); onConversationUpdate?.(conversation.conversationId, { isMuted: !nm }); toast.error('Failed to mute conversation'); }
   }, [isMuted, conversation.conversationId, onConversationUpdate]);
 
-  const isArchived = conversation.isArchived || false;
-  const handleArchiveConversation = useCallback(async () => {
-    setMoreMenuOpen(false); const na = !isArchived;
-    try { await api.patch(`/direct-messages/conversations/${conversation.conversationId}/archive`, { archived: na }); onConversationUpdate?.(conversation.conversationId, { isArchived: na }); toast.success(na ? 'Conversation archived' : 'Conversation unarchived'); if (na) onBack?.(); }
-    catch (_) { toast.error(na ? 'Failed to archive' : 'Failed to unarchive'); }
-  }, [isArchived, conversation.conversationId, onConversationUpdate, onBack]);
+  const [isArchived, setIsArchived] = useState(conversation.isArchived || false);
+const handleArchiveConversation = useCallback(async () => {
+  setMoreMenuOpen(false);
+  const na = !isArchived;
+  setIsArchived(na); // optimistic
+  try {
+    const res = await api.patch(
+      `/direct-messages/conversations/${conversation.conversationId}/archive`,
+      { archived: na }
+    );
+    const confirmed = res.data.archived; // use server truth
+    setIsArchived(confirmed);
+    onConversationUpdate?.(conversation.conversationId, { isArchived: confirmed });
+    toast.success(confirmed ? 'Conversation archived' : 'Conversation unarchived');
+    if (confirmed) onBack?.();
+  } catch (_) {
+    setIsArchived(!na); // rollback
+    toast.error(na ? 'Failed to archive' : 'Failed to unarchive');
+  }
+}, [isArchived, conversation.conversationId, onConversationUpdate, onBack]);
 
   const handleClearChat = useCallback(() => {
     setMoreMenuOpen(false);
@@ -1077,7 +1094,9 @@ const handleAudioCall = async () => {
                   <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50" style={{ animation: 'fadeSlideDown 0.12s ease' }}>
                     <button onClick={handlePinConversation}     className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 text-slate-700 hover:bg-slate-50"><Pin     className="w-4 h-4" /> {isPinned  ? 'Unpin Conversation' : 'Pin Conversation'}</button>
                     <button onClick={handleMuteConversation}    className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 text-slate-700 hover:bg-slate-50"><BellOff  className="w-4 h-4" /> {isMuted   ? 'Unmute' : 'Mute'}</button>
-                    <button onClick={handleArchiveConversation} className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 text-slate-700 hover:bg-slate-50"><Archive  className="w-4 h-4" /> {isArchived ? 'Unarchive' : 'Archive'}</button>
+                   <button onClick={handleArchiveConversation} className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 text-slate-700 hover:bg-slate-50">
+  <Archive className="w-4 h-4" /> {isArchived ? 'Unarchive' : 'Archive'}
+</button>
                     <div className="my-1 border-t border-slate-100" />
                     <button onClick={handleClearChat}           className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 text-red-500 hover:bg-red-50"><Trash2   className="w-4 h-4" /> Clear Chat</button>
                   </div>

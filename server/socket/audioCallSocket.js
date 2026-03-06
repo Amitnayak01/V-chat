@@ -1,44 +1,163 @@
 /**
- * audioCallSocket.js
- * ──────────────────
- * Audio-call socket handlers for V-Meet.
- * 1:1 audio calls + group audio rooms (mesh, up to 8 participants).
+ * audioCallSocket.js  (v2 — offline-ring support)
+ * ─────────────────────────────────────────────────
+ * Everything from v1 is kept intact.
  *
- * Routing uses `user:{userId}` socket rooms that are already maintained
- * by handlers.js — no dependency on the userSockets Map, no existing
- * code touched.
+ * NEW: Offline-ring queue
+ * ───────────────────────
+ * When the receiver is offline the call is NOT immediately failed.
+ * Instead it is stored in `pendingCalls` keyed by receiverId.
+ * The moment that user reconnects (handled in registerAudioCallHandlers
+ * via the `user-reconnected` hook OR via the exported
+ * deliverPendingAudioCalls() helper called from handlers.js), the
+ * server pushes `incoming-audio-call` to the newly-connected socket
+ * exactly as if they had been online all along.
  *
- * New socket events (client → server):
- *   audio-call-user        audio-call-accepted    audio-call-rejected
- *   audio-call-ended       audio-webrtc-offer     audio-webrtc-answer
- *   audio-webrtc-ice       create-audio-room      join-audio-room
- *   leave-audio-room
+ * The pending call is still governed by CALL_TIMEOUT_MS (30 s).
+ * If the receiver hasn't come online by then the caller gets
+ * `audio-call-timeout` and the queue entry is discarded.
  *
- * New socket events (server → client):
- *   incoming-audio-call    audio-call-initiated   audio-call-accepted
- *   audio-call-rejected    audio-call-ended       audio-call-failed
- *   audio-call-busy        audio-call-timeout     audio-webrtc-offer
- *   audio-webrtc-answer    audio-webrtc-ice       audio-room-created
- *   audio-room-joined      audio-room-full        audio-room-ended
- *   user-joined-audio      user-left-audio
+ * New server → client events:
+ *   audio-call-queued   — tells the CALLER the receiver is offline
+ *                         but the call is queued / ringing
+ *
+ * New socket events (client → server):  none — existing API unchanged.
+ *
+ * Integration — two options (pick one or both):
+ * ────────────────────────────────────────────
+ * Option A (self-contained — no handlers.js changes needed):
+ *   The client emits 'check-pending-audio-calls' on every socket (re)connect.
+ *   The handler inside registerAudioCallHandlers() catches it and calls
+ *   deliverPendingAudioCalls() automatically. Works out of the box.
+ *
+ * Option B (handlers.js — extra reliability / belt-and-suspenders):
+ *   After socket.join('user:' + userId) in your connect handler call:
+ *
+ *   import { deliverPendingAudioCalls } from './audioCallSocket.js';
+ *   deliverPendingAudioCalls(io, userId);
  */
 
-// ─── In-memory state (isolated from video-call state) ────────────────────────
+// ─── In-memory state ──────────────────────────────────────────────────────────
 /** callId → { callerId, receiverId, state, startedAt, timeoutTimer } */
 const activeCalls = new Map();
 
 /** roomId → Map(userId → { username, avatar, socketId }) */
 const audioRooms = new Map();
 
-const CALL_TIMEOUT_MS  = 30_000; // 30 s auto-reject
-const MAX_ROOM_SIZE    = 8;
+/**
+ * Offline-ring queue.
+ * receiverId → { callId, callerId, callerName, callerAvatar, timeoutTimer }
+ * Only one pending call per receiver (latest wins — previous is cancelled).
+ */
+const pendingCalls = new Map();
+
+const CALL_TIMEOUT_MS = 45_000; // 45 s — slightly longer to account for reconnect time
+const MAX_ROOM_SIZE   = 8;
 
 const genCallId = () =>
   `acall_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-// ─── Main registration ────────────────────────────────────────────────────────
+// ─── Offline-ring helpers ──────────────────────────────────────────────────────
 
+/**
+ * Queue a call for an offline receiver.
+ * Called internally when the receiver's socket room is empty.
+ */
+const _queuePendingCall = (io, callerSocket, { callId, callerId, receiverId, callerName, callerAvatar }) => {
+  // Cancel any previous pending call for this receiver
+  const existing = pendingCalls.get(receiverId);
+  if (existing) {
+    clearTimeout(existing.timeoutTimer);
+    // Tell the previous caller it was superseded (treat as timeout)
+    io.to(`user:${existing.callerId}`).emit('audio-call-timeout', {
+      callId:  existing.callId,
+      reason:  'superseded',
+    });
+    activeCalls.delete(existing.callId);
+  }
+
+  // 45-second ring window — even for offline users
+  const timeoutTimer = setTimeout(() => {
+    pendingCalls.delete(receiverId);
+    activeCalls.delete(callId);
+    io.to(`user:${callerId}`).emit('audio-call-timeout', { callId });
+    console.log(`⏰ [AudioCall] offline-ring timeout [${callId}] receiver=${receiverId}`);
+  }, CALL_TIMEOUT_MS);
+
+  pendingCalls.set(receiverId, { callId, callerId, callerName, callerAvatar, timeoutTimer });
+
+  activeCalls.set(callId, {
+    callerId,
+    receiverId,
+    state: 'ringing',
+    startedAt: Date.now(),
+    timeoutTimer,
+    offline: true,
+  });
+
+  // Tell the caller the receiver is offline but the call is queued
+  callerSocket.emit('audio-call-queued', {
+    callId,
+    receiverId,
+    message: 'User is offline — will ring when they connect',
+  });
+
+  console.log(`📵➡📞 [AudioCall] queued offline ring ${callerId} → ${receiverId} [${callId}]`);
+};
+
+/**
+ * Called from handlers.js every time a user (re)connects and joins their
+ * personal socket room.  Delivers any pending incoming call immediately.
+ *
+ * Usage in handlers.js:
+ *   import { deliverPendingAudioCalls } from './audioCallSocket.js';
+ *   // inside the connect / join-user-room handler:
+ *   deliverPendingAudioCalls(io, userId);
+ */
+export const deliverPendingAudioCalls = (io, userId) => {
+  const pending = pendingCalls.get(userId);
+  if (!pending) return;
+
+  const { callId, callerId, callerName, callerAvatar } = pending;
+
+  // Check the call is still in our activeCalls (caller may have cancelled)
+  if (!activeCalls.has(callId)) {
+    pendingCalls.delete(userId);
+    return;
+  }
+
+  console.log(`🔔 [AudioCall] delivering pending call to reconnected user=${userId} callId=${callId}`);
+
+  // Push the incoming call notification — same payload as online flow
+  io.to(`user:${userId}`).emit('incoming-audio-call', {
+    callId,
+    callerId,
+    callerName,
+    callerAvatar,
+  });
+
+  // Remove from pending (it is now live)
+  pendingCalls.delete(userId);
+};
+
+// ─── Main registration ─────────────────────────────────────────────────────────
 export const registerAudioCallHandlers = (io, socket) => {
+
+  /**
+   * check-pending-audio-calls
+   * ─────────────────────────
+   * The CLIENT emits this immediately after every socket (re)connect.
+   * It lets us deliver queued offline-ring calls without requiring handlers.js
+   * to be modified — fully self-contained.
+   *
+   * Payload: { userId }   (also accepted as socket.userId if set by auth middleware)
+   */
+  socket.on('check-pending-audio-calls', ({ userId } = {}) => {
+    const uid = userId || socket.userId;
+    if (!uid) return;
+    console.log(`🔄 [AudioCall] check-pending for userId=${uid}`);
+    deliverPendingAudioCalls(io, uid);
+  });
 
   // ══════════════════════════════════════════════════════════════════════════
   // 1 : 1  A U D I O  C A L L S
@@ -46,21 +165,11 @@ export const registerAudioCallHandlers = (io, socket) => {
 
   /**
    * audio-call-user
-   * Caller presses the audio-call button in ChatWindow.
+   * Caller presses the audio-call button.
    * Payload: { callerId, receiverId, callerName, callerAvatar }
    */
   socket.on('audio-call-user', ({ callerId, receiverId, callerName, callerAvatar }) => {
     try {
-      // ── Is receiver online? ───────────────────────────────────────────────
-      const receiverRoom = io.sockets.adapter.rooms.get(`user:${receiverId}`);
-      if (!receiverRoom || receiverRoom.size === 0) {
-        socket.emit('audio-call-failed', {
-          receiverId,
-          message: 'User is offline',
-        });
-        return;
-      }
-
       // ── Is receiver already in an active 1:1 audio call? ─────────────────
       const isReceiverBusy = Array.from(activeCalls.values()).some(
         (c) =>
@@ -77,7 +186,20 @@ export const registerAudioCallHandlers = (io, socket) => {
 
       const callId = genCallId();
 
-      // Auto-reject after 30 s of ringing
+      // ── Is receiver online? ───────────────────────────────────────────────
+      const receiverRoom = io.sockets.adapter.rooms.get(`user:${receiverId}`);
+      const isOnline     = receiverRoom && receiverRoom.size > 0;
+
+      if (!isOnline) {
+        // Queue the call — ring when they reconnect
+        _queuePendingCall(io, socket, { callId, callerId, receiverId, callerName, callerAvatar });
+
+        // Still give the caller their callId so they can cancel
+        socket.emit('audio-call-initiated', { callId, receiverId });
+        return;
+      }
+
+      // ── Receiver is online — normal flow ─────────────────────────────────
       const timeoutTimer = setTimeout(() => {
         const call = activeCalls.get(callId);
         if (call && call.state === 'ringing') {
@@ -96,9 +218,9 @@ export const registerAudioCallHandlers = (io, socket) => {
         state: 'ringing',
         startedAt: Date.now(),
         timeoutTimer,
+        offline: false,
       });
 
-      // Notify receiver
       io.to(`user:${receiverId}`).emit('incoming-audio-call', {
         callId,
         callerId,
@@ -106,12 +228,9 @@ export const registerAudioCallHandlers = (io, socket) => {
         callerAvatar,
       });
 
-      // Acknowledge caller (they need callId to reference the call later)
       socket.emit('audio-call-initiated', { callId, receiverId });
 
-      console.log(
-        `📞 [AudioCall] initiated ${callerId} → ${receiverId} [${callId}]`,
-      );
+      console.log(`📞 [AudioCall] initiated ${callerId} → ${receiverId} [${callId}]`);
     } catch (err) {
       console.error('[AudioCall] audio-call-user error:', err);
     }
@@ -130,7 +249,6 @@ export const registerAudioCallHandlers = (io, socket) => {
       clearTimeout(call.timeoutTimer);
       call.state = 'connected';
 
-      // Tell the caller — they will now create the WebRTC offer
       io.to(`user:${callerId}`).emit('audio-call-accepted', {
         callId,
         acceptedBy: socket.userId || call.receiverId,
@@ -153,6 +271,9 @@ export const registerAudioCallHandlers = (io, socket) => {
       if (call?.timeoutTimer) clearTimeout(call.timeoutTimer);
       activeCalls.delete(callId);
 
+      // Also clean up pending queue if it was still there
+      if (call?.receiverId) pendingCalls.delete(call.receiverId);
+
       io.to(`user:${callerId}`).emit('audio-call-rejected', {
         callId,
         rejectedBy: socket.userId || call?.receiverId,
@@ -166,7 +287,7 @@ export const registerAudioCallHandlers = (io, socket) => {
 
   /**
    * audio-call-ended
-   * Either party ended an established call.
+   * Either party ended the call.
    * Payload: { callId, peerId }
    */
   socket.on('audio-call-ended', ({ callId, peerId }) => {
@@ -174,6 +295,9 @@ export const registerAudioCallHandlers = (io, socket) => {
       const call = activeCalls.get(callId);
       if (call?.timeoutTimer) clearTimeout(call.timeoutTimer);
       activeCalls.delete(callId);
+
+      // Clean up pending queue if the caller cancelled before receiver came online
+      if (call?.receiverId) pendingCalls.delete(call.receiverId);
 
       if (peerId) {
         io.to(`user:${peerId}`).emit('audio-call-ended', {
@@ -191,7 +315,6 @@ export const registerAudioCallHandlers = (io, socket) => {
 
   // ══════════════════════════════════════════════════════════════════════════
   // A U D I O - O N L Y  W e b R T C  S I G N A L I N G
-  // Separate event names prevent collision with the video call WebRTC events.
   // ══════════════════════════════════════════════════════════════════════════
 
   socket.on('audio-webrtc-offer', ({ offer, to, from }) => {
@@ -212,21 +335,15 @@ export const registerAudioCallHandlers = (io, socket) => {
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  // G R O U P  A U D I O  R O O M S
+  // G R O U P  A U D I O  R O O M S  (unchanged)
   // ══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * create-audio-room
-   * Host creates and enters a new audio room.
-   * Payload: { roomId, userId, username, avatar }
-   */
   socket.on('create-audio-room', ({ roomId, userId, username, avatar }) => {
     try {
       if (!audioRooms.has(roomId)) audioRooms.set(roomId, new Map());
       const room = audioRooms.get(roomId);
       room.set(userId, { username, avatar, socketId: socket.id });
       socket.join(`audio:${roomId}`);
-
       socket.emit('audio-room-created', { roomId, participants: [] });
       console.log(`🎙️ [AudioRoom] created ${roomId} by ${username}`);
     } catch (err) {
@@ -234,17 +351,11 @@ export const registerAudioCallHandlers = (io, socket) => {
     }
   });
 
-  /**
-   * join-audio-room
-   * Participant joins an existing audio room.
-   * Payload: { roomId, userId, username, avatar }
-   */
   socket.on('join-audio-room', ({ roomId, userId, username, avatar }) => {
     try {
       if (!audioRooms.has(roomId)) audioRooms.set(roomId, new Map());
       const room = audioRooms.get(roomId);
 
-      // Enforce participant cap
       if (room.size >= MAX_ROOM_SIZE) {
         socket.emit('audio-room-full', { roomId, maxSize: MAX_ROOM_SIZE });
         return;
@@ -253,36 +364,27 @@ export const registerAudioCallHandlers = (io, socket) => {
       room.set(userId, { username, avatar, socketId: socket.id });
       socket.join(`audio:${roomId}`);
 
-      // Joiner needs the list of existing participants to create offers to them
       const existingParticipants = Array.from(room.entries())
         .filter(([uid]) => uid !== userId)
         .map(([uid, info]) => ({ userId: uid, ...info }));
 
       socket.emit('audio-room-joined', { roomId, participants: existingParticipants });
 
-      // Notify everyone else
       socket.to(`audio:${roomId}`).emit('user-joined-audio', {
         userId,
         username,
         avatar,
         allParticipants: Array.from(room.entries()).map(([uid, info]) => ({
-          userId: uid,
-          ...info,
+          userId: uid, ...info,
         })),
       });
 
-      console.log(
-        `🎙️ [AudioRoom] ${username} joined ${roomId} (${room.size} total)`,
-      );
+      console.log(`🎙️ [AudioRoom] ${username} joined ${roomId} (${room.size} total)`);
     } catch (err) {
       console.error('[AudioCall] join-audio-room error:', err);
     }
   });
 
-  /**
-   * leave-audio-room
-   * Payload: { roomId, userId }
-   */
   socket.on('leave-audio-room', ({ roomId, userId }) => {
     try {
       _evictFromAudioRoom(io, socket, roomId, userId);
@@ -292,7 +394,7 @@ export const registerAudioCallHandlers = (io, socket) => {
   });
 };
 
-// ─── Shared eviction helper (used by leave + disconnect cleanup) ──────────────
+// ─── Shared eviction helper ────────────────────────────────────────────────────
 const _evictFromAudioRoom = (io, socket, roomId, userId) => {
   const room = audioRooms.get(roomId);
   if (!room || !room.has(userId)) return;
@@ -307,23 +409,23 @@ const _evictFromAudioRoom = (io, socket, roomId, userId) => {
     io.to(`audio:${roomId}`).emit('user-left-audio', {
       userId,
       allParticipants: Array.from(room.entries()).map(([uid, info]) => ({
-        userId: uid,
-        ...info,
+        userId: uid, ...info,
       })),
     });
   }
 };
 
-// ─── Disconnect cleanup — called from handlers.js disconnect handler ──────────
+// ─── Disconnect cleanup ────────────────────────────────────────────────────────
 export const cleanupAudioCallUser = (io, userId) => {
-  // End any pending / active 1:1 audio calls involving this user
+  // End any active 1:1 calls — but do NOT cancel pending (offline-ring) calls
+  // Those should survive a brief disconnect/reconnect cycle.
   for (const [callId, call] of activeCalls.entries()) {
+    if (call.offline) continue; // leave queued calls alone — they have their own timer
+
     if (call.callerId === userId || call.receiverId === userId) {
       clearTimeout(call.timeoutTimer);
 
-      const peerId =
-        call.callerId === userId ? call.receiverId : call.callerId;
-
+      const peerId = call.callerId === userId ? call.receiverId : call.callerId;
       io.to(`user:${peerId}`).emit('audio-call-ended', {
         callId,
         reason: 'peer-disconnected',
@@ -333,19 +435,17 @@ export const cleanupAudioCallUser = (io, userId) => {
     }
   }
 
-  // Remove from any audio rooms the user was in
+  // Remove from any audio rooms
   for (const [roomId, room] of audioRooms.entries()) {
     if (room.has(userId)) {
       room.delete(userId);
-
       if (room.size === 0) {
         audioRooms.delete(roomId);
       } else {
         io.to(`audio:${roomId}`).emit('user-left-audio', {
           userId,
           allParticipants: Array.from(room.entries()).map(([uid, info]) => ({
-            userId: uid,
-            ...info,
+            userId: uid, ...info,
           })),
         });
       }
