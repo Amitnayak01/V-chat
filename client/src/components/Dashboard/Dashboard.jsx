@@ -448,15 +448,10 @@ const Dashboard = () => {
       setIncomingCallCount((c) => c + 1);
     });
     socket.on('call-accepted', ({ roomId }) => navigate(`/room/${roomId}`, { replace: true }));
-
-    socket.on('call-rejected', () => {
+socket.on('call-rejected', () => {
   toast.error('Call was declined', { icon: '📵' });
-  if (window.location.pathname.startsWith('/room/')) {
-    const returnPath = sessionStorage.getItem('vmeet_return_path') || '/dashboard';
-    sessionStorage.removeItem('vmeet_return_path');
-    navigate(returnPath, { replace: true });
-  }
 });
+ 
     socket.on('call-failed',   ({ message }) => toast.error(message));
     socket.on('user-online',   ({ username }) =>
       toast.success(`${username} is now online`, { icon: '🟢', duration: 2000 })
@@ -490,16 +485,16 @@ const Dashboard = () => {
     } catch {}
   }, []);
 
-  const handleStartMeeting = () => {
-    const id = generateRoomId();
-    saveRecentRoom(id);
-    navigate(`/room/${id}`, { replace: true });
-  };
+const handleStartMeeting = () => {
+  const id = generateRoomId();
+  saveRecentRoom(id);
+  navigate(`/room/${id}`, { replace: true, state: { returnTo: location.pathname } });
+};
 
-  const handleJoinMeeting = (code) => {
-    saveRecentRoom(code);
-    navigate(`/room/${code}`, { replace: true });
-  };
+const handleJoinMeeting = (code) => {
+  saveRecentRoom(code);
+  navigate(`/room/${code}`, { replace: true, state: { returnTo: location.pathname } });
+};
 
   const handleCopyLink = () => {
     const id   = generateRoomId();
@@ -508,8 +503,6 @@ const Dashboard = () => {
     toast.success('Meeting link copied!');
   };
 const handleCallUser = (targetUser, roomId) => {
-  // ── Save return path ──────────────────────────────────────────────────
-  sessionStorage.setItem('vmeet_return_path', window.location.pathname);
   emit('call-user', {
     callerId:     user._id,
     receiverId:   targetUser._id,
@@ -518,20 +511,20 @@ const handleCallUser = (targetUser, roomId) => {
     callerAvatar: user.avatar,
   });
   toast.success(`Calling ${targetUser.username}...`);
-  setTimeout(() => navigate(`/room/${roomId}`, { replace: true }), 1000);
+  setTimeout(() => navigate(`/room/${roomId}`, { replace: true, state: { returnTo: location.pathname } }), 1000);
 };
 
-  const handleAcceptCall = () => {
-    if (!incomingCall) return;
-    emit('accept-call', {
-      callerId: incomingCall.callerId,
-      roomId:   incomingCall.roomId,
-      userId:   user._id,
-    });
-    navigate(`/room/${incomingCall.roomId}`, { replace: true });
-    setIncomingCall(null);
-    setIncomingCallCount((c) => Math.max(0, c - 1));
-  };
+const handleAcceptCall = () => {
+  if (!incomingCall) return;
+  emit('accept-call', {
+    callerId: incomingCall.callerId,
+    roomId:   incomingCall.roomId,
+    userId:   user._id,
+  });
+  navigate(`/room/${incomingCall.roomId}`, { replace: true, state: { returnTo: location.pathname } });
+  setIncomingCall(null);
+  setIncomingCallCount((c) => Math.max(0, c - 1));
+};
 
   const handleRejectCall = () => {
     if (!incomingCall) return;

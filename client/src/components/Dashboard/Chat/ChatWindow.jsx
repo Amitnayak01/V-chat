@@ -951,8 +951,6 @@ const onStoppedTyping = ({ conversationId, userId }) => {
 
 const handleVideoCall = () => {
   const roomId = Math.random().toString(36).substring(2, 15);
-  // ── Save where we came from so VideoRoom can return here ─────────────
-  sessionStorage.setItem('vmeet_return_path', window.location.pathname);
   directMessageAPI.sendMessage({
     receiverId: conversation.user._id,
     content: '📞 Video call invitation',
@@ -965,7 +963,7 @@ const handleVideoCall = () => {
     callerName:   user.username,
     callerAvatar: user.avatar,
   });
-  navigate(`/room/${roomId}`);
+  navigate(`/room/${roomId}`, { state: { returnTo: window.location.pathname } });
 };
 
 // ── NEW ──────────────────────────────────────────────────────────────

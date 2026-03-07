@@ -1,7 +1,7 @@
 import {
   useEffect, useState, useRef, useCallback, memo,
 } from 'react';
-import { useParams, useNavigate }    from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence }   from 'framer-motion';
 import { MessageCircle, Copy, RefreshCw, Share2 } from 'lucide-react';
 import toast                         from 'react-hot-toast';
@@ -78,10 +78,11 @@ const VideoRoom = () => {
   const noAnswerTimerRef = useRef(null);
 
   // ── External hooks ───────────────────────────────────────────────────────
+ 
   const { roomId }   = useParams();
-  const navigate     = useNavigate();
-  const { user }     = useAuth();
-
+const navigate     = useNavigate();
+const location     = useLocation();
+const { user }     = useAuth();
   const {
     socket, emit, setCurrentRoom, clearCurrentRoom, connected,
   } = useSocket();
@@ -103,11 +104,12 @@ const VideoRoom = () => {
   // Before navigating into a room, callers must save:
   //   sessionStorage.setItem('vmeet_return_path', window.location.pathname)
   // This helper reads that value and falls back to /dashboard.
+
+
   const navigateBack = useCallback(() => {
-    const returnPath = sessionStorage.getItem('vmeet_return_path') || '/dashboard';
-    sessionStorage.removeItem('vmeet_return_path');
-    navigate(returnPath, { replace: true });
-  }, [navigate]);
+  const returnTo = location.state?.returnTo || '/dashboard';
+  navigate(returnTo, { replace: true });
+}, [navigate, location.state?.returnTo]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const pushEvent = useCallback((eventType, data = {}) => {
@@ -749,11 +751,16 @@ const VideoRoom = () => {
   }, [recordings]);
 
   // ── End call ─────────────────────────────────────────────────────────────
-  const handleEndCall = useCallback(() => {
-    if (isRecording) { toast.error('Stop recording before leaving'); return; }
-    intentionalLeave.current = true;
-    navigateBack();
-  }, [isRecording, navigateBack]);
+
+const handleEndCall = useCallback(() => {
+  if (isRecording) { toast.error('Stop recording before leaving'); return; }
+  intentionalLeave.current = true;
+  emit('leave-room', { roomId, userId: user._id });
+  clearCurrentRoom();
+  navigateBack();
+}, [isRecording, navigateBack, emit, roomId, user._id, clearCurrentRoom]);
+
+
 
   // ── Hand raise ────────────────────────────────────────────────────────────
   const handleRaiseHand = useCallback(() => {
