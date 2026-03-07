@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { Eye, EyeOff, LogIn, Loader2, AlertCircle, ServerCrash } from 'lucide-react';
-import { withRetry } from '../../utils/retryFetch';
+import { Eye, EyeOff, LogIn } from 'lucide-react';
 
 // ============================================================
 //  LOGO FILE LOCATION:  src/assets/logo.png
@@ -15,16 +14,13 @@ const Login = () => {
     password: ''
   });
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading]           = useState(false);
-  const [wakingUp, setWakingUp]         = useState(false);   // ← NEW
-  const [retryInfo, setRetryInfo]       = useState('');      // ← NEW
-  const [errors, setErrors]             = useState({});
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState({});
 
   const { login } = useAuth();
-  const navigate  = useNavigate();
-  const location  = useLocation();
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // ── unchanged ──────────────────────────────────────────────
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -34,62 +30,20 @@ const Login = () => {
   const validate = () => {
     const newErrors = {};
     if (!formData.username.trim()) newErrors.username = 'Username is required';
-    if (!formData.password)        newErrors.password = 'Password is required';
+    if (!formData.password) newErrors.password = 'Password is required';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
-  // ───────────────────────────────────────────────────────────
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
-
     setLoading(true);
-    setWakingUp(false);
-    setRetryInfo('');
-    setErrors({});
-
-    try {
-      let loginResult;
-
-      await withRetry(
-        async () => {
-          loginResult = await login(formData);
-
-          // AuthContext returns { success, message } instead of throwing on 4xx
-          // So we must manually throw to stop retrying on real auth errors
-          if (!loginResult.success) {
-            const err = new Error(loginResult.message || 'Login failed');
-            err.isAuthError = true;   // mark as non-retryable
-            throw err;
-          }
-        },
-        {
-          retries: 8,
-          delayMs: 5000,
-          onWaiting: (attempt, total) => {
-            setWakingUp(true);
-            setRetryInfo(`Attempt ${attempt} of ${total} — please wait…`);
-          },
-        }
-      );
-
-      // Success
+    const result = await login(formData);
+    setLoading(false);
+    if (result.success) {
       const from = location.state?.from?.pathname || '/dashboard';
       navigate(from, { replace: true });
-
-    } catch (err) {
-      if (err.isAuthError) {
-        // Real login failure (wrong username/password, etc.)
-        setErrors({ form: err.message });
-      } else {
-        // Network completely down after all retries
-        setErrors({ form: 'Unable to reach the server. Please check your connection and try again.' });
-      }
-    } finally {
-      setLoading(false);
-      setWakingUp(false);
-      setRetryInfo('');
     }
   };
 
@@ -110,25 +64,6 @@ const Login = () => {
             Sign in to start collaborating
           </p>
         </div>
-
-        {/* ── Waking-up Banner ── */}
-        {wakingUp && (
-          <div className="mb-4 flex items-start gap-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-sm animate-fade-in">
-            <ServerCrash className="w-4 h-4 mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="font-semibold">Server is waking up…</p>
-              <p className="text-xs text-amber-600 mt-0.5">{retryInfo} This can take up to 30 seconds on first use.</p>
-            </div>
-          </div>
-        )}
-
-        {/* ── Form-level Error Banner ── */}
-        {errors.form && (
-          <div className="mb-4 flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm animate-fade-in">
-            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-            <p>{errors.form}</p>
-          </div>
-        )}
 
         {/* Login Form */}
         <div className="card p-5 sm:p-8 animate-fade-in">
@@ -177,7 +112,7 @@ const Login = () => {
                 >
                   {showPassword
                     ? <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
-                    : <Eye    className="w-4 h-4 sm:w-5 sm:h-5" />
+                    : <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
                   }
                 </button>
               </div>
@@ -190,12 +125,12 @@ const Login = () => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full btn btn-primary flex items-center justify-center space-x-2 py-3 text-sm sm:text-base disabled:opacity-70"
+              className="w-full btn btn-primary flex items-center justify-center space-x-2 py-3 text-sm sm:text-base"
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                  <span>{wakingUp ? 'Waiting for server…' : 'Signing in…'}</span>
+                  <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Signing in...</span>
                 </>
               ) : (
                 <>
