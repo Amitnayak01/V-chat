@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { Eye, EyeOff, UserPlus, Upload } from 'lucide-react';
+import { Eye, EyeOff, UserPlus, Upload, Loader2, AlertCircle, ServerCrash } from 'lucide-react';
+import { withRetry } from '../../utils/retryFetch';
 
 // ============================================================
 //  LOGO FILE LOCATION:  src/assets/logo.png
@@ -15,14 +16,17 @@ const Register = () => {
     confirmPassword: '',
     avatar: ''
   });
-  const [showPassword, setShowPassword] = useState(false);
+  const [showPassword, setShowPassword]               = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState({});
+  const [loading, setLoading]                         = useState(false);
+  const [wakingUp, setWakingUp]                       = useState(false);  // ← NEW
+  const [retryInfo, setRetryInfo]                     = useState('');     // ← NEW
+  const [errors, setErrors]                           = useState({});
 
   const { register } = useAuth();
   const navigate = useNavigate();
 
+  // ── unchanged ──────────────────────────────────────────────
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -37,10 +41,10 @@ const Register = () => {
   const validate = () => {
     const newErrors = {};
     if (!formData.username.trim()) newErrors.username = 'Username is required';
-    else if (formData.username.length < 3) newErrors.username = 'Username must be at least 3 characters';
+    else if (formData.username.length < 3)  newErrors.username = 'Username must be at least 3 characters';
     else if (formData.username.length > 30) newErrors.username = 'Username cannot exceed 30 characters';
     if (!formData.password) newErrors.password = 'Password is required';
-    else if (formData.password.length < 6) newErrors.password = 'Password must be at least 6 characters';
+    else if (formData.password.length < 6)  newErrors.password = 'Password must be at least 6 characters';
     if (!formData.confirmPassword) newErrors.confirmPassword = 'Please confirm your password';
     else if (formData.password !== formData.confirmPassword) newErrors.confirmPassword = 'Passwords do not match';
     setErrors(newErrors);
@@ -51,28 +55,76 @@ const Register = () => {
     const password = formData.password;
     if (!password) return { strength: 0, label: '', color: '' };
     let strength = 0;
-    if (password.length >= 6) strength++;
+    if (password.length >= 6)  strength++;
     if (password.length >= 10) strength++;
     if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
-    if (/[0-9]/.test(password)) strength++;
+    if (/[0-9]/.test(password))        strength++;
     if (/[^a-zA-Z0-9]/.test(password)) strength++;
     const labels = ['Weak', 'Fair', 'Good', 'Strong', 'Very Strong'];
-    const colors = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-green-500', 'bg-emerald-500'];
+    const colors  = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-green-500', 'bg-emerald-500'];
     return {
       strength: Math.min(strength, 5),
       label: labels[Math.min(strength - 1, 4)] || '',
       color: colors[Math.min(strength - 1, 4)] || ''
     };
   };
+  // ───────────────────────────────────────────────────────────
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
+
     setLoading(true);
-    const registerData = { ...formData, avatar: formData.avatar || generateAvatar() };
-    const result = await register(registerData);
-    setLoading(false);
-    if (result.success) navigate('/dashboard');
+    setWakingUp(false);
+    setRetryInfo('');
+    setErrors({});
+
+    const registerData = {
+      ...formData,
+      avatar: formData.avatar || generateAvatar()
+    };
+
+    try {
+      let registerResult;
+
+      await withRetry(
+        async () => {
+          registerResult = await register(registerData);
+
+          // AuthContext returns { success, message } instead of throwing on 4xx
+          // Manually throw so withRetry knows NOT to retry real errors (e.g. username taken)
+          if (!registerResult.success) {
+            const err = new Error(registerResult.message || 'Registration failed');
+            err.isAuthError = true;   // mark as non-retryable
+            throw err;
+          }
+        },
+        {
+          retries: 8,
+          delayMs: 5000,
+          onWaiting: (attempt, total) => {
+            setWakingUp(true);
+            setRetryInfo(`Attempt ${attempt} of ${total} — please wait…`);
+          },
+        }
+      );
+
+      // Success
+      navigate('/dashboard');
+
+    } catch (err) {
+      if (err.isAuthError) {
+        // Real registration failure (username taken, validation, etc.)
+        setErrors({ form: err.message });
+      } else {
+        // Network completely down after all retries exhausted
+        setErrors({ form: 'Unable to reach the server. Please check your connection and try again.' });
+      }
+    } finally {
+      setLoading(false);
+      setWakingUp(false);
+      setRetryInfo('');
+    }
   };
 
   const passwordStrength = getPasswordStrength();
@@ -95,6 +147,25 @@ const Register = () => {
             Create your account to get started
           </p>
         </div>
+
+        {/* ── Waking-up Banner ── */}
+        {wakingUp && (
+          <div className="mb-4 flex items-start gap-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-sm animate-fade-in">
+            <ServerCrash className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-semibold">Server is waking up…</p>
+              <p className="text-xs text-amber-600 mt-0.5">{retryInfo} This can take up to 30 seconds on first use.</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Form-level Error Banner ── */}
+        {errors.form && (
+          <div className="mb-4 flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm animate-fade-in">
+            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <p>{errors.form}</p>
+          </div>
+        )}
 
         {/* Register Form */}
         <div className="card p-5 sm:p-8 animate-fade-in">
@@ -201,12 +272,12 @@ const Register = () => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full btn btn-primary flex items-center justify-center space-x-2 py-3 text-sm sm:text-base"
+              className="w-full btn btn-primary flex items-center justify-center space-x-2 py-3 text-sm sm:text-base disabled:opacity-70"
             >
               {loading ? (
                 <>
-                  <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>Creating account...</span>
+                  <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                  <span>{wakingUp ? 'Waiting for server…' : 'Creating account…'}</span>
                 </>
               ) : (
                 <>

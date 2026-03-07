@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Phone, PhoneIncoming, PhoneMissed, PhoneOutgoing, PhoneOff,
   Search, Trash2, Trash, X, Filter, Clock, Calendar,
@@ -149,20 +150,47 @@ const ConfirmDialog = ({ message, onConfirm, onCancel }) => (
 /* ─── Single call row ───────────────────────────────────────────────────── */
 const CallRow = ({ record, idx, onDelete, onCallAgain }) => {
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef(null);
-  const meta   = CALL_META[record.type]  || CALL_META.incoming;
-  const sMeta  = STATUS_META[record.status] || STATUS_META.completed;
+  const [menuPos,  setMenuPos]  = useState({ top: 0, left: 0 });
+  const menuRef   = useRef(null);
+  const btnRef    = useRef(null);
+  const meta      = CALL_META[record.type]  || CALL_META.incoming;
+  const sMeta     = STATUS_META[record.status] || STATUS_META.completed;
 
+  /* Close on outside click */
   useEffect(() => {
     if (!menuOpen) return;
-    const close = e => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    const close = e => {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target) &&
+        btnRef.current  && !btnRef.current.contains(e.target)
+      ) setMenuOpen(false);
+    };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [menuOpen]);
 
-  return (
-    <div className="ch-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderRadius: 14, cursor: 'default', position: 'relative', background: '#fff', animationDelay: `${idx * 30}ms` }}>
+  /* Calculate portal position from the ⋮ button */
+  const openMenu = () => {
+    if (btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setMenuPos({
+        top:  rect.bottom + 6,
+        left: rect.right - 150,   // align right edge of menu with button
+      });
+    }
+    setMenuOpen(v => !v);
+  };
 
+  return (
+    <div
+      className="ch-row"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '10px 16px', borderRadius: 14, cursor: 'default',
+        position: 'relative', background: '#fff',
+        animationDelay: `${idx * 30}ms`,
+      }}
+    >
       <Avatar src={record.peerAvatar} name={record.peerName} size={46} type={record.type} />
 
       {/* Info */}
@@ -208,28 +236,51 @@ const CallRow = ({ record, idx, onDelete, onCallAgain }) => {
           <Phone style={{ width: 15, height: 15, color: '#0ab89a' }} strokeWidth={2.2} />
         </button>
 
-        {/* ⋮ menu */}
-        <div style={{ position: 'relative' }} ref={menuRef}>
-          <button
-            onClick={() => setMenuOpen(v => !v)}
-            className="ch-row-action"
-            style={{ width: 36, height: 36, borderRadius: 10, background: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-          >
-            <MoreVertical style={{ width: 15, height: 15, color: T.slate3 }} />
-          </button>
-          {menuOpen && (
-            <div style={{ position: 'absolute', right: 0, top: '110%', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 8px 24px rgba(0,0,0,.12)', zIndex: 10, minWidth: 150, animation: 'ch-pop .15s ease', overflow: 'hidden' }}>
-              <button onClick={() => { onCallAgain(record); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: T.slate1 }}>
-                <Phone style={{ width: 14, height: 14, color: '#0ab89a' }} /> Call again
-              </button>
-              <div style={{ height: 1, background: '#f1f5f9' }} />
-              <button onClick={() => { onDelete(record.id); setMenuOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: T.red }}>
-                <Trash2 style={{ width: 14, height: 14 }} /> Delete
-              </button>
-            </div>
-          )}
-        </div>
+        {/* ⋮ button */}
+        <button
+          ref={btnRef}
+          onClick={openMenu}
+          className="ch-row-action"
+          style={{ width: 36, height: 36, borderRadius: 10, background: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+        >
+          <MoreVertical style={{ width: 15, height: 15, color: T.slate3 }} />
+        </button>
       </div>
+
+      {/* ⋮ Dropdown — rendered via portal so it always floats above everything */}
+      {menuOpen && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top:      menuPos.top,
+            left:     menuPos.left,
+            background: '#fff',
+            border: '1px solid #e2e8f0',
+            borderRadius: 12,
+            boxShadow: '0 8px 24px rgba(0,0,0,.15)',
+            zIndex: 99999,
+            minWidth: 150,
+            animation: 'ch-pop .15s ease',
+            overflow: 'hidden',
+          }}
+        >
+          <button
+            onClick={() => { onCallAgain(record); setMenuOpen(false); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: T.slate1 }}
+          >
+            <Phone style={{ width: 14, height: 14, color: '#0ab89a' }} /> Call again
+          </button>
+          <div style={{ height: 1, background: '#f1f5f9' }} />
+          <button
+            onClick={() => { onDelete(record.id); setMenuOpen(false); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: T.red }}
+          >
+            <Trash2 style={{ width: 14, height: 14 }} /> Delete
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
